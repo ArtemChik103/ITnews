@@ -8,3 +8,13 @@ backend/.coverage
 backend/htmlcov/
 backend/data/
 *.pyc
+
+# Generated / local files
+*.pptx
+generate_presentation.py
+repository_code_dump.txt
+demo_questions.txt
+frontend/test-results/
+frontend/src/assets/hero.png
+frontend/src/assets/react.svg
+frontend/src/assets/vite.svg
