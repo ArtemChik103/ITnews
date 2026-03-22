@@ -83,14 +83,13 @@ class Neo4jGraphService:
                 WHERE a.article_id IN $article_ids
                 WITH collect(DISTINCT seed.normalized_name) AS seed_names
                 MATCH (source:Entity)-[r:RELATED_TO]->(target:Entity)
-                WHERE source.normalized_name IN seed_names OR target.normalized_name IN seed_names
-                OPTIONAL MATCH (article:Article)-[:MENTIONS]->(source)
-                WHERE article.article_id IN $article_ids
+                WHERE (source.normalized_name IN seed_names OR target.normalized_name IN seed_names)
+                  AND size(coalesce(r.article_ids, [])) > 0
                 RETURN source.name AS from_name,
                        r.type AS relation,
                        target.name AS to_name,
-                       collect(DISTINCT article.article_id) AS source_article_ids,
-                       size(collect(DISTINCT article.article_id)) AS source_count
+                       coalesce(r.article_ids, []) AS source_article_ids,
+                       size(coalesce(r.article_ids, [])) AS source_count
                 ORDER BY source_count DESC, from_name ASC
                 LIMIT $max_relations
                 """,
@@ -137,6 +136,24 @@ class Neo4jGraphService:
                 language=article.language,
                 published_at=article.published_at.isoformat() if article.published_at else None,
             )
+            await session.run(
+                """
+                MATCH (:Article {article_id: $article_id})-[m:MENTIONS]->(:Entity)
+                DELETE m
+                """,
+                article_id=article.id,
+            )
+            await session.run(
+                """
+                MATCH (:Entity)-[r:RELATED_TO]->(:Entity)
+                WHERE $article_id IN coalesce(r.article_ids, [])
+                SET r.article_ids = [existing_id IN coalesce(r.article_ids, []) WHERE existing_id <> $article_id]
+                WITH r
+                WHERE size(coalesce(r.article_ids, [])) = 0
+                DELETE r
+                """,
+                article_id=article.id,
+            )
 
             for entity in entities:
                 labels = ":Entity"
@@ -167,12 +184,19 @@ class Neo4jGraphService:
                     MATCH (source:Entity {normalized_name: $source_normalized, entity_type: $source_type})
                     MATCH (target:Entity {normalized_name: $target_normalized, entity_type: $target_type})
                     MERGE (source)-[r:RELATED_TO {type: $relation_type}]->(target)
+                    ON CREATE SET r.article_ids = [$article_id]
+                    ON MATCH SET r.article_ids =
+                        CASE
+                            WHEN $article_id IN coalesce(r.article_ids, []) THEN r.article_ids
+                            ELSE coalesce(r.article_ids, []) + $article_id
+                        END
                     """,
                     source_normalized=normalize_entity_name(relation.source_name),
                     source_type=relation.source_type,
                     target_normalized=normalize_entity_name(relation.target_name),
                     target_type=relation.target_type,
                     relation_type=relation.relation_type,
+                    article_id=article.id,
                 )
 
         return {"entities": len(entities), "relations": len(relations)}
