@@ -10,7 +10,7 @@ from app.schemas.search import SearchResponse
 from app.services.llm.groq_gateway import GroqGateway
 from app.services.retrieval.service import RetrievalResult, RetrievalService
 
-LLM_BUDGET_SECONDS = 8
+LLM_BUDGET_SECONDS = 5
 
 
 class RagService:
