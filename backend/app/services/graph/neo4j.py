@@ -1,3 +1,5 @@
+import asyncio
+
 from neo4j import AsyncGraphDatabase
 
 from app.core.config import get_settings
@@ -7,6 +9,9 @@ from app.services.nlp.schemas import ExtractedEntity, ExtractedRelation
 
 
 class Neo4jGraphService:
+    _constraints_ready = False
+    _constraint_lock = asyncio.Lock()
+
     def __init__(self) -> None:
         settings = get_settings()
         self.driver = AsyncGraphDatabase.driver(
@@ -18,11 +23,31 @@ class Neo4jGraphService:
         await self.driver.close()
 
     async def ensure_constraints(self) -> None:
-        async with self.driver.session() as session:
-            await session.run("CREATE CONSTRAINT article_id IF NOT EXISTS FOR (a:Article) REQUIRE a.article_id IS UNIQUE")
-            await session.run(
-                "CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE (e.normalized_name, e.entity_type) IS UNIQUE"
-            )
+        if self.__class__._constraints_ready:
+            return
+
+        async with self.__class__._constraint_lock:
+            if self.__class__._constraints_ready:
+                return
+
+            async with self.driver.session() as session:
+                result = await session.run(
+                    "CREATE CONSTRAINT article_id IF NOT EXISTS FOR (a:Article) REQUIRE a.article_id IS UNIQUE"
+                )
+                await result.consume()
+                result = await session.run(
+                    "CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE (e.normalized_name, e.entity_type) IS UNIQUE"
+                )
+                await result.consume()
+
+            self.__class__._constraints_ready = True
+
+    @classmethod
+    def mark_constraints_ready(cls) -> None:
+        cls._constraints_ready = True
+
+    async def initialize(self) -> None:
+        await self.ensure_constraints()
 
     async def get_article_entities(self, article_id: int) -> list[str]:
         async with self.driver.session() as session:

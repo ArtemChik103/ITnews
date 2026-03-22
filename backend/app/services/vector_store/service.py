@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 
+import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
@@ -83,14 +84,28 @@ class VectorStoreService:
 
     async def fetch_ready_points(self) -> list[models.Record]:
         await self.ensure_collection()
-        records, _ = await asyncio.to_thread(
-            self.client.scroll,
-            collection_name=self.settings.qdrant_collection,
-            limit=10000,
-            with_payload=True,
-            with_vectors=True,
-        )
-        return records
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"http://{self.settings.qdrant_host}:{self.settings.qdrant_port}/collections/{self.settings.qdrant_collection}/points/scroll",
+                json={
+                    "limit": 10000,
+                    "with_payload": True,
+                    "with_vector": True,
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+        points = payload.get("result", {}).get("points", [])
+        return [
+            models.Record(
+                id=point["id"],
+                payload=point.get("payload") or {},
+                vector=point.get("vector"),
+            )
+            for point in points
+            if point.get("vector")
+        ]
 
 
 def build_qdrant_filter(filters: dict) -> models.Filter | None:

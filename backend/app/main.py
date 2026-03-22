@@ -10,6 +10,7 @@ from app.db.schema import ensure_article_schema
 from app.db.session import SessionLocal, engine
 from app.models import Article  # noqa: F401
 from app.services.clustering.service import ClusteringService
+from app.services.graph.neo4j import Neo4jGraphService
 from app.services.indexing import pipeline as indexing_pipeline
 from app.services.indexing.pipeline import IndexingPipeline
 from app.services.ingestion.pipeline import IngestionPipeline
@@ -46,6 +47,9 @@ async def lifespan(_: FastAPI):
     vector_store = VectorStoreService()
     await vector_store.ensure_collection()
     await vector_store.close()
+    graph = Neo4jGraphService()
+    await graph.initialize()
+    await graph.close()
 
     if settings.enable_scheduler and not scheduler.running:
         scheduler.add_job(run_scheduled_ingestion, "interval", minutes=settings.ingestion_interval_minutes)
