@@ -1,0 +1,2959 @@
+Repository code dump
+Generated: 2026-03-22T17:28:49.6706069+09:00
+Excluded: .git, caches, binaries, .env
+
+========================================================================================================================
+FILE: .dockerignore
+========================================================================================================================
+
+.git
+.gitignore
+.env
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+backend/.venv/
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/tests/
+backend/htmlcov/
+backend/.coverage
+frontend/
+docs/
+*.pyc
+
+
+========================================================================================================================
+FILE: .env.example
+========================================================================================================================
+
+PROJECT_NAME=IT News Platform
+APP_ENV=local
+API_V1_PREFIX=/api/v1
+BACKEND_PORT=8000
+LOG_LEVEL=INFO
+
+POSTGRES_DB=itnews
+POSTGRES_USER=itnews
+POSTGRES_PASSWORD=itnews
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+
+NEO4J_URI=bolt://neo4j:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=please-change-me
+
+REDIS_URL=redis://redis:6379/0
+
+QDRANT_HOST=qdrant
+QDRANT_PORT=6333
+QDRANT_COLLECTION=news_articles
+
+ENABLE_SCHEDULER=true
+INGESTION_INTERVAL_MINUTES=30
+EMBEDDING_INDEX_INTERVAL_MINUTES=5
+CLUSTERING_INTERVAL_MINUTES=30
+ENABLE_NEWS_API=false
+NEWS_API_URL=https://newsapi.org/v2/everything
+NEWS_API_KEY=
+NEWS_API_QUERY=technology OR cybersecurity OR software
+
+DEFAULT_LANGUAGE=en
+SUPPORTED_LANGUAGES=ru,en
+ALLOWED_RSS_SOURCES=https://techcrunch.com/feed/,https://www.wired.com/feed/rss,https://feeds.arstechnica.com/arstechnica/index
+EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+EMBEDDING_DIMENSION=384
+EMBEDDING_MAX_CHARS=4000
+EMBEDDING_MAX_RETRIES=3
+CLUSTERING_HDBSCAN_THRESHOLD=50
+CLUSTERING_MIN_CLUSTER_SIZE=5
+LLM_PROVIDER=groq
+GROQ_API_KEY=
+GROQ_MODEL_PRIMARY=openai/gpt-oss-120b
+GROQ_MODEL_FALLBACK=llama-3.3-70b-versatile
+GROQ_MODEL_FAST=llama-3.1-8b-instant
+GROQ_API_URL=https://api.groq.com/openai/v1/chat/completions
+GROQ_TIMEOUT_SECONDS=45
+RAG_TOP_K=5
+GRAPH_MAX_ENTITIES=15
+GRAPH_MAX_RELATIONS=20
+RAG_MAX_ARTICLE_SNIPPET_CHARS=700
+RAG_CONTEXT_TOKEN_BUDGET=8000
+
+========================================================================================================================
+FILE: .gitignore
+========================================================================================================================
+
+.env
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+backend/.venv/
+backend/.coverage
+backend/htmlcov/
+backend/data/
+*.pyc
+
+========================================================================================================================
+FILE: backend\app\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\api\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\api\routes.py
+========================================================================================================================
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db_session
+from app.schemas.article import ArticleRead
+from app.schemas.search import ClusterSummaryResponse, SearchRequest, SearchResponse, SemanticSearchResponse
+from app.services.clustering.service import ClusteringService
+from app.services.graph.pipeline import graph_article
+from app.services.health import run_healthcheck
+from app.services.indexing.pipeline import IndexingPipeline
+from app.services.ingestion.pipeline import IngestionPipeline
+from app.services.rag.service import RagService
+from app.services.retrieval.service import RetrievalService
+
+router = APIRouter()
+
+
+@router.get("/health")
+async def health() -> dict:
+    return await run_healthcheck()
+
+
+@router.post("/ingestion/run")
+async def run_ingestion(session: AsyncSession = Depends(get_db_session)) -> dict:
+    return await IngestionPipeline(session).run()
+
+
+@router.get("/articles", response_model=list[ArticleRead])
+async def list_articles(session: AsyncSession = Depends(get_db_session)) -> list[ArticleRead]:
+    return list(await IngestionPipeline(session).list_articles())
+
+
+@router.post("/articles/{article_id}/graph")
+async def process_article_graph(article_id: int, session: AsyncSession = Depends(get_db_session)) -> dict:
+    article = await IngestionPipeline(session).get_article(article_id)
+    if article is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return await graph_article(article)
+
+
+@router.post("/indexing/run")
+async def run_indexing(session: AsyncSession = Depends(get_db_session)) -> dict:
+    return await IndexingPipeline(session).run()
+
+
+@router.post("/clustering/run")
+async def run_clustering(session: AsyncSession = Depends(get_db_session)) -> dict:
+    return await ClusteringService(session).recluster()
+
+
+@router.get("/api/search/semantic", response_model=SemanticSearchResponse)
+async def semantic_search(
+    q: str = Query(..., min_length=1),
+    top_k: int = Query(default=5, ge=1, le=20),
+    source: str | None = None,
+    language: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> SemanticSearchResponse:
+    items = await RetrievalService(session).semantic_search(
+        query=q,
+        top_k=top_k,
+        filters={
+            "source": source,
+            "language": language,
+            "date_from": date_from,
+            "date_to": date_to,
+        },
+    )
+    return SemanticSearchResponse(
+        items=[
+            {
+                "article_id": item.article_id,
+                "title": item.title,
+                "source": item.source,
+                "url": item.url,
+                "published_at": item.published_at,
+                "cluster_id": item.cluster_id,
+                "score": item.score,
+            }
+            for item in items
+        ],
+        query=q,
+        top_k=top_k,
+    )
+
+
+@router.get("/api/clusters", response_model=ClusterSummaryResponse)
+async def list_clusters(session: AsyncSession = Depends(get_db_session)) -> ClusterSummaryResponse:
+    return ClusterSummaryResponse(clusters=await ClusteringService(session).list_clusters())
+
+
+@router.post("/api/search", response_model=SearchResponse)
+async def search(request: SearchRequest, session: AsyncSession = Depends(get_db_session)) -> SearchResponse:
+    return await RagService(session).answer(
+        question=request.question,
+        top_k=request.top_k,
+        use_graph=request.use_graph,
+        filters={
+            "date_from": request.date_from.isoformat() if request.date_from else None,
+            "date_to": request.date_to.isoformat() if request.date_to else None,
+            "source": request.source_filter[0] if request.source_filter and len(request.source_filter) == 1 else None,
+            "sources": request.source_filter if request.source_filter and len(request.source_filter) > 1 else None,
+        },
+    )
+
+========================================================================================================================
+FILE: backend\app\core\config.py
+========================================================================================================================
+
+from functools import lru_cache
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
+
+    project_name: str = Field(default="IT News Platform", alias="PROJECT_NAME")
+    app_env: str = Field(default="local", alias="APP_ENV")
+    api_v1_prefix: str = Field(default="/api/v1", alias="API_V1_PREFIX")
+    backend_port: int = Field(default=8000, alias="BACKEND_PORT")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    postgres_db: str = Field(default="itnews", alias="POSTGRES_DB")
+    postgres_user: str = Field(default="itnews", alias="POSTGRES_USER")
+    postgres_password: str = Field(default="itnews", alias="POSTGRES_PASSWORD")
+    postgres_host: str = Field(default="postgres", alias="POSTGRES_HOST")
+    postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
+
+    neo4j_uri: str = Field(default="bolt://neo4j:7687", alias="NEO4J_URI")
+    neo4j_user: str = Field(default="neo4j", alias="NEO4J_USER")
+    neo4j_password: str = Field(default="please-change-me", alias="NEO4J_PASSWORD")
+
+    redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")
+
+    qdrant_host: str = Field(default="qdrant", alias="QDRANT_HOST")
+    qdrant_port: int = Field(default=6333, alias="QDRANT_PORT")
+    qdrant_collection: str = Field(default="news_articles", alias="QDRANT_COLLECTION")
+
+    enable_scheduler: bool = Field(default=True, alias="ENABLE_SCHEDULER")
+    ingestion_interval_minutes: int = Field(default=30, alias="INGESTION_INTERVAL_MINUTES")
+    embedding_index_interval_minutes: int = Field(default=5, alias="EMBEDDING_INDEX_INTERVAL_MINUTES")
+    clustering_interval_minutes: int = Field(default=30, alias="CLUSTERING_INTERVAL_MINUTES")
+    enable_news_api: bool = Field(default=False, alias="ENABLE_NEWS_API")
+    news_api_url: str = Field(default="https://newsapi.org/v2/everything", alias="NEWS_API_URL")
+    news_api_key: str = Field(default="", alias="NEWS_API_KEY")
+    news_api_query: str = Field(default="technology OR cybersecurity OR software", alias="NEWS_API_QUERY")
+    embedding_model: str = Field(
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        alias="EMBEDDING_MODEL",
+    )
+    embedding_dimension: int = Field(default=384, alias="EMBEDDING_DIMENSION")
+    embedding_max_chars: int = Field(default=4000, alias="EMBEDDING_MAX_CHARS")
+    embedding_max_retries: int = Field(default=3, alias="EMBEDDING_MAX_RETRIES")
+    clustering_hdbscan_threshold: int = Field(default=50, alias="CLUSTERING_HDBSCAN_THRESHOLD")
+    clustering_min_cluster_size: int = Field(default=5, alias="CLUSTERING_MIN_CLUSTER_SIZE")
+    llm_provider: str = Field(default="groq", alias="LLM_PROVIDER")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model_primary: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL_PRIMARY")
+    groq_model_fallback: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL_FALLBACK")
+    groq_model_fast: str = Field(default="llama-3.1-8b-instant", alias="GROQ_MODEL_FAST")
+    groq_api_url: str = Field(
+        default="https://api.groq.com/openai/v1/chat/completions",
+        alias="GROQ_API_URL",
+    )
+    groq_timeout_seconds: int = Field(default=45, alias="GROQ_TIMEOUT_SECONDS")
+    rag_top_k: int = Field(default=5, alias="RAG_TOP_K")
+    graph_max_entities: int = Field(default=15, alias="GRAPH_MAX_ENTITIES")
+    graph_max_relations: int = Field(default=20, alias="GRAPH_MAX_RELATIONS")
+    rag_max_article_snippet_chars: int = Field(default=700, alias="RAG_MAX_ARTICLE_SNIPPET_CHARS")
+    rag_context_token_budget: int = Field(default=8000, alias="RAG_CONTEXT_TOKEN_BUDGET")
+
+    default_language: str = Field(default="en", alias="DEFAULT_LANGUAGE")
+    supported_languages: str = Field(default="ru,en", alias="SUPPORTED_LANGUAGES")
+    allowed_rss_sources: str = Field(
+        default="https://techcrunch.com/feed/,https://www.wired.com/feed/rss,https://feeds.arstechnica.com/arstechnica/index",
+        alias="ALLOWED_RSS_SOURCES",
+    )
+
+    @property
+    def database_url(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def rss_sources(self) -> list[str]:
+        return [item.strip() for item in self.allowed_rss_sources.split(",") if item.strip()]
+
+    @property
+    def languages(self) -> list[str]:
+        return [item.strip() for item in self.supported_languages.split(",") if item.strip()]
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+========================================================================================================================
+FILE: backend\app\db\base.py
+========================================================================================================================
+
+from sqlalchemy.orm import DeclarativeBase
+
+
+class Base(DeclarativeBase):
+    pass
+
+========================================================================================================================
+FILE: backend\app\db\schema.py
+========================================================================================================================
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+
+async def ensure_article_schema(engine: AsyncEngine) -> None:
+    statements = [
+        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS embedding_status VARCHAR(16) NOT NULL DEFAULT 'pending'",
+        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(255)",
+        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ",
+        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS cluster_id INTEGER",
+        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS clustered_at TIMESTAMPTZ",
+        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS embedding_error TEXT",
+        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS embedding_attempts INTEGER NOT NULL DEFAULT 0",
+        "UPDATE articles SET embedding_status = 'pending' WHERE embedding_status IS NULL",
+        "UPDATE articles SET embedding_attempts = 0 WHERE embedding_attempts IS NULL",
+    ]
+    async with engine.begin() as connection:
+        for statement in statements:
+            await connection.execute(text(statement))
+
+========================================================================================================================
+FILE: backend\app\db\session.py
+========================================================================================================================
+
+from collections.abc import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.core.config import get_settings
+
+settings = get_settings()
+engine = create_async_engine(settings.database_url, future=True)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+
+async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    async with SessionLocal() as session:
+        yield session
+
+========================================================================================================================
+FILE: backend\app\main.py
+========================================================================================================================
+
+from contextlib import asynccontextmanager
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import FastAPI
+
+from app.api.routes import router
+from app.core.config import get_settings
+from app.db.base import Base
+from app.db.schema import ensure_article_schema
+from app.db.session import SessionLocal, engine
+from app.models import Article  # noqa: F401
+from app.services.clustering.service import ClusteringService
+from app.services.graph.neo4j import Neo4jGraphService
+from app.services.indexing import pipeline as indexing_pipeline
+from app.services.indexing.pipeline import IndexingPipeline
+from app.services.ingestion.pipeline import IngestionPipeline
+from app.services.vector_store.service import VectorStoreService
+
+settings = get_settings()
+scheduler = AsyncIOScheduler(timezone="UTC")
+
+
+async def run_scheduled_ingestion() -> None:
+    async with SessionLocal() as session:
+        await IngestionPipeline(session).run()
+
+
+async def run_scheduled_indexing() -> None:
+    async with SessionLocal() as session:
+        result = await IndexingPipeline(session).run()
+        if result["trigger_recluster"]:
+            await ClusteringService(session).recluster()
+            indexing_pipeline.indexed_since_recluster = 0
+
+
+async def run_scheduled_clustering() -> None:
+    async with SessionLocal() as session:
+        await ClusteringService(session).recluster()
+        indexing_pipeline.indexed_since_recluster = 0
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    await ensure_article_schema(engine)
+    vector_store = VectorStoreService()
+    await vector_store.ensure_collection()
+    await vector_store.close()
+    graph = Neo4jGraphService()
+    await graph.initialize()
+    await graph.close()
+
+    if settings.enable_scheduler and not scheduler.running:
+        scheduler.add_job(run_scheduled_ingestion, "interval", minutes=settings.ingestion_interval_minutes)
+        scheduler.add_job(run_scheduled_indexing, "interval", minutes=settings.embedding_index_interval_minutes)
+        scheduler.add_job(run_scheduled_clustering, "interval", minutes=settings.clustering_interval_minutes)
+        scheduler.start()
+
+    yield
+
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+    await engine.dispose()
+
+
+app = FastAPI(title=settings.project_name, lifespan=lifespan)
+app.include_router(router)
+
+========================================================================================================================
+FILE: backend\app\models\__init__.py
+========================================================================================================================
+
+from app.models.article import Article
+
+__all__ = ["Article"]
+
+========================================================================================================================
+FILE: backend\app\models\article.py
+========================================================================================================================
+
+from datetime import datetime
+
+from sqlalchemy import DateTime, Index, String, Text, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base
+
+
+class Article(Base):
+    __tablename__ = "articles"
+    __table_args__ = (
+        UniqueConstraint("url", name="uq_articles_url"),
+        Index("ix_articles_source_published_at", "source", "published_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_raw: Mapped[str] = mapped_column(Text, nullable=False)
+    content_clean: Mapped[str] = mapped_column(Text, nullable=False)
+    content_normalized: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    language: Mapped[str] = mapped_column(String(8), nullable=False, default="en")
+    embedding_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending")
+    embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cluster_id: Mapped[int | None] = mapped_column(nullable=True)
+    clustered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_attempts: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+========================================================================================================================
+FILE: backend\app\schemas\article.py
+========================================================================================================================
+
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class ArticleRead(BaseModel):
+    id: int
+    title: str
+    source: str
+    url: str
+    language: str
+    embedding_status: str
+    embedding_model: str | None
+    embedded_at: datetime | None
+    cluster_id: int | None
+    clustered_at: datetime | None
+    embedding_error: str | None
+    published_at: datetime | None
+    ingested_at: datetime
+
+    model_config = {"from_attributes": True}
+
+========================================================================================================================
+FILE: backend\app\schemas\search.py
+========================================================================================================================
+
+from datetime import date, datetime
+
+from pydantic import BaseModel, Field
+
+
+class SemanticSearchItem(BaseModel):
+    article_id: int
+    title: str
+    source: str
+    url: str
+    published_at: datetime | None
+    cluster_id: int | None
+    score: float
+
+
+class SemanticSearchResponse(BaseModel):
+    items: list[SemanticSearchItem]
+    query: str
+    top_k: int
+
+
+class ClusterSummaryItem(BaseModel):
+    cluster_id: int
+    size: int
+    sample_articles: list[SemanticSearchItem]
+    top_sources: list[str]
+
+
+class ClusterSummaryResponse(BaseModel):
+    clusters: list[ClusterSummaryItem]
+
+
+class SearchRequest(BaseModel):
+    question: str
+    top_k: int = Field(default=5, ge=1, le=20)
+    use_graph: bool = True
+    source_filter: list[str] | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+
+
+class SearchSource(BaseModel):
+    article_id: int
+    title: str
+    url: str
+    source: str
+
+
+class SearchEntity(BaseModel):
+    name: str
+    type: str
+
+
+class GraphEdge(BaseModel):
+    from_: str = Field(alias="from")
+    relation: str
+    to: str
+    source_article_ids: list[int] = []
+
+    model_config = {"populate_by_name": True}
+
+
+class RetrievalDebug(BaseModel):
+    vector_hits: int
+    graph_hits: int
+    llm_provider: str | None
+    llm_model: str | None
+    degraded_mode: str | None
+
+
+class SearchResponse(BaseModel):
+    answer: str
+    sources: list[SearchSource]
+    entities: list[SearchEntity]
+    graph_edges: list[GraphEdge]
+    retrieval_debug: RetrievalDebug
+    confidence: float
+    status: str
+
+========================================================================================================================
+FILE: backend\app\services\clustering\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\services\clustering\service.py
+========================================================================================================================
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from math import floor, sqrt
+
+import hdbscan
+import numpy as np
+from sklearn.cluster import KMeans
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.models.article import Article
+from app.services.vector_store.service import VectorStoreService
+
+
+class ClusteringService:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.settings = get_settings()
+
+    async def recluster(self) -> dict:
+        vector_store = VectorStoreService()
+        try:
+            points = await vector_store.fetch_ready_points()
+            if not points:
+                return {"algorithm": "none", "clustered": 0}
+
+            article_ids = [int(point.id) for point in points]
+            matrix = np.asarray([point.vector for point in points], dtype=np.float32)
+            labels, algorithm = cluster_vectors(
+                matrix=matrix,
+                hdbscan_threshold=self.settings.clustering_hdbscan_threshold,
+                min_cluster_size=self.settings.clustering_min_cluster_size,
+            )
+
+            now = datetime.now(timezone.utc)
+            articles = await self.session.scalars(select(Article).where(Article.id.in_(article_ids)))
+            article_map = {article.id: article for article in articles}
+
+            for article_id, cluster_id in zip(article_ids, labels, strict=True):
+                article = article_map.get(article_id)
+                if article is None:
+                    continue
+                article.cluster_id = int(cluster_id)
+                article.clustered_at = now
+                await vector_store.update_cluster_metadata(article_id=article_id, cluster_id=int(cluster_id))
+
+            await self.session.commit()
+            return {"algorithm": algorithm, "clustered": len(article_ids)}
+        finally:
+            await vector_store.close()
+
+    async def list_clusters(self) -> list[dict]:
+        articles = await self.session.scalars(
+            select(Article).where(Article.cluster_id.is_not(None), Article.cluster_id != -1).order_by(Article.cluster_id, Article.published_at)
+        )
+        clusters: dict[int, list[Article]] = {}
+        for article in articles:
+            clusters.setdefault(article.cluster_id, []).append(article)
+
+        summaries = []
+        for cluster_id, items in sorted(clusters.items(), key=lambda item: len(item[1]), reverse=True):
+            top_sources = sorted({article.source for article in items})[:3]
+            sample_articles = [
+                {
+                    "article_id": article.id,
+                    "title": article.title,
+                    "source": article.source,
+                    "url": article.url,
+                    "published_at": article.published_at,
+                    "cluster_id": article.cluster_id,
+                    "score": 1.0,
+                }
+                for article in items[:3]
+            ]
+            summaries.append(
+                {
+                    "cluster_id": cluster_id,
+                    "size": len(items),
+                    "sample_articles": sample_articles,
+                    "top_sources": top_sources,
+                }
+            )
+        return summaries
+
+
+def cluster_vectors(matrix: np.ndarray, hdbscan_threshold: int, min_cluster_size: int) -> tuple[list[int], str]:
+    count = len(matrix)
+    if count == 0:
+        return [], "none"
+    if count == 1:
+        return [0], "single"
+    if count < hdbscan_threshold:
+        clusters = max(2, min(10, floor(sqrt(count / 2))))
+        model = KMeans(n_clusters=min(clusters, count), n_init="auto", random_state=42)
+        return model.fit_predict(matrix).astype(int).tolist(), "kmeans"
+
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, metric="euclidean")
+    labels = clusterer.fit_predict(matrix).astype(int).tolist()
+    return labels, "hdbscan"
+
+========================================================================================================================
+FILE: backend\app\services\embeddings\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\services\embeddings\service.py
+========================================================================================================================
+
+import asyncio
+from dataclasses import dataclass
+
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+from app.core.config import get_settings
+
+_model: SentenceTransformer | None = None
+
+
+@dataclass(slots=True)
+class EmbeddingResult:
+    embedding: list[float] | None
+    embedding_model: str | None
+    status: str
+    error: str | None = None
+
+
+class EmbeddingService:
+    def __init__(self) -> None:
+        self.settings = get_settings()
+
+    async def generate(self, article_id: int, title: str, content_clean: str, language: str) -> EmbeddingResult:
+        del article_id, language
+        input_text = build_embedding_input(title=title, content_clean=content_clean)
+        if not input_text:
+            return EmbeddingResult(
+                embedding=None,
+                embedding_model=self.settings.embedding_model,
+                status="skipped",
+                error="empty title and content",
+            )
+
+        try:
+            embedding = await asyncio.to_thread(self._encode, input_text)
+        except Exception as exc:  # noqa: BLE001
+            return EmbeddingResult(
+                embedding=None,
+                embedding_model=self.settings.embedding_model,
+                status="failed",
+                error=str(exc),
+            )
+
+        return EmbeddingResult(
+            embedding=embedding,
+            embedding_model=self.settings.embedding_model,
+            status="ready",
+        )
+
+    def _encode(self, text: str) -> list[float]:
+        model = get_sentence_transformer()
+        embedding = model.encode(text, normalize_embeddings=True)
+        vector = np.asarray(embedding, dtype=np.float32)
+        norm = np.linalg.norm(vector)
+        if norm > 0:
+            vector = vector / norm
+        return vector.tolist()
+
+
+def build_embedding_input(title: str, content_clean: str) -> str:
+    settings = get_settings()
+    title_clean = (title or "").strip()
+    content = (content_clean or "").strip()
+    if title_clean and content:
+        return f"{title_clean}\n\n{content[: settings.embedding_max_chars]}"
+    if title_clean:
+        return title_clean
+    if content:
+        return content[: settings.embedding_max_chars]
+    return ""
+
+
+def get_sentence_transformer() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        settings = get_settings()
+        _model = SentenceTransformer(settings.embedding_model)
+    return _model
+
+========================================================================================================================
+FILE: backend\app\services\graph\neo4j.py
+========================================================================================================================
+
+import asyncio
+
+from neo4j import AsyncGraphDatabase
+
+from app.core.config import get_settings
+from app.models.article import Article
+from app.services.nlp.pipeline import normalize_entity_name
+from app.services.nlp.schemas import ExtractedEntity, ExtractedRelation
+
+
+class Neo4jGraphService:
+    _constraints_ready = False
+    _constraint_lock = asyncio.Lock()
+
+    def __init__(self) -> None:
+        settings = get_settings()
+        self.driver = AsyncGraphDatabase.driver(
+            settings.neo4j_uri,
+            auth=(settings.neo4j_user, settings.neo4j_password),
+        )
+
+    async def close(self) -> None:
+        await self.driver.close()
+
+    async def ensure_constraints(self) -> None:
+        if self.__class__._constraints_ready:
+            return
+
+        async with self.__class__._constraint_lock:
+            if self.__class__._constraints_ready:
+                return
+
+            async with self.driver.session() as session:
+                result = await session.run(
+                    "CREATE CONSTRAINT article_id IF NOT EXISTS FOR (a:Article) REQUIRE a.article_id IS UNIQUE"
+                )
+                await result.consume()
+                result = await session.run(
+                    "CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE (e.normalized_name, e.entity_type) IS UNIQUE"
+                )
+                await result.consume()
+
+            self.__class__._constraints_ready = True
+
+    @classmethod
+    def mark_constraints_ready(cls) -> None:
+        cls._constraints_ready = True
+
+    async def initialize(self) -> None:
+        await self.ensure_constraints()
+
+    async def get_article_entities(self, article_id: int) -> list[str]:
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (:Article {article_id: $article_id})-[:MENTIONS]->(e:Entity)
+                RETURN e.name AS name
+                ORDER BY e.name
+                """,
+                article_id=article_id,
+            )
+            rows = await result.data()
+        return [row["name"] for row in rows]
+
+    async def get_context(self, article_ids: list[int], max_entities: int, max_relations: int) -> dict:
+        async with self.driver.session() as session:
+            entity_result = await session.run(
+                """
+                MATCH (a:Article)-[:MENTIONS]->(e:Entity)
+                WHERE a.article_id IN $article_ids
+                RETURN e.name AS name, e.entity_type AS type, count(DISTINCT a) AS mentions
+                ORDER BY mentions DESC, name ASC
+                LIMIT $max_entities
+                """,
+                article_ids=article_ids,
+                max_entities=max_entities,
+            )
+            entities = await entity_result.data()
+
+            relation_result = await session.run(
+                """
+                MATCH (a:Article)-[:MENTIONS]->(seed:Entity)
+                WHERE a.article_id IN $article_ids
+                WITH collect(DISTINCT seed.normalized_name) AS seed_names
+                MATCH (source:Entity)-[r:RELATED_TO]->(target:Entity)
+                WHERE (source.normalized_name IN seed_names OR target.normalized_name IN seed_names)
+                  AND size(coalesce(r.article_ids, [])) > 0
+                RETURN source.name AS from_name,
+                       r.type AS relation,
+                       target.name AS to_name,
+                       coalesce(r.article_ids, []) AS source_article_ids,
+                       size(coalesce(r.article_ids, [])) AS source_count
+                ORDER BY source_count DESC, from_name ASC
+                LIMIT $max_relations
+                """,
+                article_ids=article_ids,
+                max_relations=max_relations,
+            )
+            edges = await relation_result.data()
+
+        return {
+            "entities": [{"name": item["name"], "type": item["type"]} for item in entities],
+            "edges": [
+                {
+                    "from": item["from_name"],
+                    "relation": item["relation"],
+                    "to": item["to_name"],
+                    "source_article_ids": [article_id for article_id in item["source_article_ids"] if article_id is not None],
+                }
+                for item in edges
+            ],
+        }
+
+    async def upsert_article_graph(
+        self,
+        article: Article,
+        entities: list[ExtractedEntity],
+        relations: list[ExtractedRelation],
+    ) -> dict:
+        await self.ensure_constraints()
+
+        async with self.driver.session() as session:
+            await session.run(
+                """
+                MERGE (article:Article {article_id: $article_id})
+                SET article.title = $title,
+                    article.url = $url,
+                    article.source = $source,
+                    article.language = $language,
+                    article.published_at = $published_at
+                """,
+                article_id=article.id,
+                title=article.title,
+                url=article.url,
+                source=article.source,
+                language=article.language,
+                published_at=article.published_at.isoformat() if article.published_at else None,
+            )
+            await session.run(
+                """
+                MATCH (:Article {article_id: $article_id})-[m:MENTIONS]->(:Entity)
+                DELETE m
+                """,
+                article_id=article.id,
+            )
+            await session.run(
+                """
+                MATCH (:Entity)-[r:RELATED_TO]->(:Entity)
+                WHERE $article_id IN coalesce(r.article_ids, [])
+                SET r.article_ids = [existing_id IN coalesce(r.article_ids, []) WHERE existing_id <> $article_id]
+                WITH r
+                WHERE size(coalesce(r.article_ids, [])) = 0
+                DELETE r
+                """,
+                article_id=article.id,
+            )
+
+            for entity in entities:
+                labels = ":Entity"
+                if entity.entity_type == "PERSON":
+                    labels += ":Person"
+                elif entity.entity_type == "ORGANIZATION":
+                    labels += ":Organization"
+                elif entity.entity_type == "LOCATION":
+                    labels += ":Location"
+
+                await session.run(
+                    f"""
+                    MERGE (e{labels} {{normalized_name: $normalized_name, entity_type: $entity_type}})
+                    SET e.name = $name
+                    WITH e
+                    MATCH (article:Article {{article_id: $article_id}})
+                    MERGE (article)-[:MENTIONS]->(e)
+                    """,
+                    normalized_name=entity.normalized_name,
+                    entity_type=entity.entity_type,
+                    name=entity.name,
+                    article_id=article.id,
+                )
+
+            for relation in relations:
+                await session.run(
+                    """
+                    MATCH (source:Entity {normalized_name: $source_normalized, entity_type: $source_type})
+                    MATCH (target:Entity {normalized_name: $target_normalized, entity_type: $target_type})
+                    MERGE (source)-[r:RELATED_TO {type: $relation_type}]->(target)
+                    ON CREATE SET r.article_ids = [$article_id]
+                    ON MATCH SET r.article_ids =
+                        CASE
+                            WHEN $article_id IN coalesce(r.article_ids, []) THEN r.article_ids
+                            ELSE coalesce(r.article_ids, []) + $article_id
+                        END
+                    """,
+                    source_normalized=normalize_entity_name(relation.source_name),
+                    source_type=relation.source_type,
+                    target_normalized=normalize_entity_name(relation.target_name),
+                    target_type=relation.target_type,
+                    relation_type=relation.relation_type,
+                    article_id=article.id,
+                )
+
+        return {"entities": len(entities), "relations": len(relations)}
+
+========================================================================================================================
+FILE: backend\app\services\graph\pipeline.py
+========================================================================================================================
+
+from dataclasses import asdict
+
+from app.models.article import Article
+from app.services.graph.neo4j import Neo4jGraphService
+from app.services.nlp.pipeline import extract_entities, extract_relations
+
+
+async def graph_article(article: Article) -> dict:
+    entities = extract_entities(article)
+    relations = extract_relations(article, entities)
+    graph = Neo4jGraphService()
+    try:
+        persisted = await graph.upsert_article_graph(article, entities, relations)
+    finally:
+        await graph.close()
+    return {
+        "article_id": article.id,
+        "entities": [asdict(entity) for entity in entities],
+        "relations": [asdict(relation) for relation in relations],
+        "persisted": persisted,
+    }
+
+========================================================================================================================
+FILE: backend\app\services\health.py
+========================================================================================================================
+
+import asyncio
+
+from neo4j import AsyncGraphDatabase
+from qdrant_client import QdrantClient
+from redis.asyncio import Redis
+from sqlalchemy import text
+
+from app.core.config import get_settings
+from app.db.session import engine
+
+
+async def check_postgres() -> bool:
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
+    return True
+
+
+async def check_neo4j() -> bool:
+    settings = get_settings()
+    driver = AsyncGraphDatabase.driver(settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password))
+    try:
+        await driver.verify_connectivity()
+        return True
+    finally:
+        await driver.close()
+
+
+async def check_redis() -> bool:
+    settings = get_settings()
+    client = Redis.from_url(settings.redis_url)
+    try:
+        await client.ping()
+        return True
+    finally:
+        await client.aclose()
+
+
+async def check_qdrant() -> bool:
+    settings = get_settings()
+    client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    try:
+        client.get_collections()
+        return True
+    finally:
+        client.close()
+
+
+async def run_healthcheck() -> dict:
+    checks = await asyncio.gather(
+        check_postgres(),
+        check_neo4j(),
+        check_redis(),
+        check_qdrant(),
+        return_exceptions=True,
+    )
+    names = ["postgres", "neo4j", "redis", "qdrant"]
+    components = {
+        name: ("ok" if result is True else f"error: {result}")
+        for name, result in zip(names, checks, strict=True)
+    }
+    return {
+        "status": "ok" if all(value == "ok" for value in components.values()) else "degraded",
+        "components": components,
+    }
+
+========================================================================================================================
+FILE: backend\app\services\indexing\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\services\indexing\pipeline.py
+========================================================================================================================
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.models.article import Article
+from app.services.embeddings.service import EmbeddingService
+from app.services.graph.neo4j import Neo4jGraphService
+from app.services.vector_store.service import VectorStoreService
+
+indexed_since_recluster = 0
+
+
+class IndexingPipeline:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.settings = get_settings()
+        self.embedding_service = EmbeddingService()
+
+    async def run(self) -> dict:
+        global indexed_since_recluster
+        articles = await self.session.scalars(
+            select(Article).where(
+                or_(Article.embedding_status == "pending", Article.embedding_status == "failed"),
+                Article.embedding_attempts < self.settings.embedding_max_retries,
+            ).order_by(Article.ingested_at).limit(100)
+        )
+        pending = list(articles)
+        vector_store = VectorStoreService()
+        graph = Neo4jGraphService()
+        indexed = 0
+        skipped = 0
+        failed = 0
+
+        try:
+            await vector_store.ensure_collection()
+            for article in pending:
+                article.embedding_attempts += 1
+                result = await self.embedding_service.generate(
+                    article_id=article.id,
+                    title=article.title,
+                    content_clean=article.content_clean,
+                    language=article.language,
+                )
+                article.embedding_status = result.status
+                article.embedding_model = result.embedding_model
+                article.embedding_error = result.error
+
+                if result.status == "ready" and result.embedding:
+                    article.embedded_at = datetime.now(UTC)
+                    payload = await build_qdrant_payload(graph=graph, article=article)
+                    await vector_store.upsert_article_embedding(
+                        article_id=article.id,
+                        embedding=result.embedding,
+                        payload=payload,
+                    )
+                    indexed += 1
+                elif result.status == "skipped":
+                    skipped += 1
+                else:
+                    failed += 1
+
+            await self.session.commit()
+        finally:
+            await vector_store.close()
+            await graph.close()
+
+        indexed_since_recluster += indexed
+        return {
+            "selected": len(pending),
+            "indexed": indexed,
+            "skipped": skipped,
+            "failed": failed,
+            "trigger_recluster": indexed_since_recluster >= 100,
+        }
+
+
+async def build_qdrant_payload(graph: Neo4jGraphService, article: Article) -> dict:
+    entity_names = []
+    try:
+        entity_names = await graph.get_article_entities(article.id)
+    except Exception:  # noqa: BLE001
+        entity_names = []
+
+    return {
+        "article_id": str(article.id),
+        "title": article.title,
+        "source": article.source,
+        "url": article.url,
+        "language": article.language,
+        "published_at": article.published_at.isoformat() if article.published_at else None,
+        "published_at_ts": int(article.published_at.timestamp()) if article.published_at else None,
+        "cluster_id": article.cluster_id,
+        "entity_names": entity_names,
+        "has_entities": bool(entity_names),
+    }
+
+========================================================================================================================
+FILE: backend\app\services\ingestion\pipeline.py
+========================================================================================================================
+
+import logging
+from collections.abc import Sequence
+
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.article import Article
+from app.services.ingestion.preprocess import clean_html, detect_language, normalize_text
+from app.services.ingestion.sources import NewsAPIClient, RSSSourceClient
+
+logger = logging.getLogger(__name__)
+
+
+class IngestionPipeline:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.rss_client = RSSSourceClient()
+        self.api_client = NewsAPIClient()
+
+    async def run(self) -> dict:
+        raw_articles = await self.rss_client.fetch()
+        raw_articles.extend(await self.api_client.fetch())
+
+        saved = 0
+        duplicates = 0
+        errors = 0
+
+        for raw in raw_articles:
+            try:
+                existing = await self.session.scalar(select(Article).where(Article.url == raw.url))
+                if existing is not None:
+                    duplicates += 1
+                    continue
+
+                content_clean = clean_html(raw.content_raw)
+                article = Article(
+                    title=raw.title,
+                    content_raw=raw.content_raw,
+                    content_clean=content_clean,
+                    content_normalized=normalize_text(content_clean),
+                    source=raw.source,
+                    url=raw.url,
+                    published_at=raw.published_at,
+                    language=detect_language(content_clean or raw.title),
+                    embedding_status="pending",
+                    embedding_attempts=0,
+                )
+                self.session.add(article)
+                saved += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Failed to ingest article %s: %s", raw.url, exc)
+                errors += 1
+
+        await self.session.commit()
+        return {"fetched": len(raw_articles), "saved": saved, "duplicates": duplicates, "errors": errors}
+
+    async def list_articles(self) -> Sequence[Article]:
+        result = await self.session.scalars(select(Article).order_by(desc(Article.ingested_at)).limit(50))
+        return result.all()
+
+    async def get_article(self, article_id: int) -> Article | None:
+        return await self.session.get(Article, article_id)
+
+========================================================================================================================
+FILE: backend\app\services\ingestion\preprocess.py
+========================================================================================================================
+
+import re
+
+from bs4 import BeautifulSoup
+from langdetect import DetectorFactory, LangDetectException, detect
+
+from app.core.config import get_settings
+
+DetectorFactory.seed = 0
+WHITESPACE_RE = re.compile(r"\s+")
+
+
+def clean_html(raw_text: str) -> str:
+    soup = BeautifulSoup(raw_text or "", "html.parser")
+    text = soup.get_text(separator=" ")
+    return WHITESPACE_RE.sub(" ", text).strip()
+
+
+def normalize_text(text: str) -> str:
+    return WHITESPACE_RE.sub(" ", text).strip().lower()
+
+
+def detect_language(text: str) -> str:
+    settings = get_settings()
+    try:
+        language = detect(text) if text.strip() else settings.default_language
+    except LangDetectException:
+        language = settings.default_language
+    return language if language in settings.languages else settings.default_language
+
+========================================================================================================================
+FILE: backend\app\services\ingestion\schemas.py
+========================================================================================================================
+
+from dataclasses import dataclass
+from datetime import datetime
+
+
+@dataclass(slots=True)
+class RawArticle:
+    title: str
+    content_raw: str
+    source: str
+    url: str
+    published_at: datetime | None
+
+========================================================================================================================
+FILE: backend\app\services\ingestion\sources.py
+========================================================================================================================
+
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse
+
+import feedparser
+import httpx
+
+from app.core.config import get_settings
+from app.services.ingestion.schemas import RawArticle
+
+
+class RSSSourceClient:
+    async def fetch(self) -> list[RawArticle]:
+        settings = get_settings()
+        articles: list[RawArticle] = []
+
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            for source_url in settings.rss_sources:
+                response = await client.get(source_url)
+                response.raise_for_status()
+                parsed = feedparser.parse(response.text)
+                hostname = urlparse(source_url).netloc
+                for entry in parsed.entries:
+                    articles.append(
+                        RawArticle(
+                            title=entry.get("title", "").strip() or "Untitled",
+                            content_raw=_extract_entry_content(entry),
+                            source=hostname,
+                            url=entry.get("link", "").strip(),
+                            published_at=_parse_published_at(entry),
+                        )
+                    )
+        return [article for article in articles if article.url]
+
+
+class NewsAPIClient:
+    async def fetch(self) -> list[RawArticle]:
+        settings = get_settings()
+        if not settings.enable_news_api or not settings.news_api_key:
+            return []
+
+        params = {
+            "q": settings.news_api_query,
+            "apiKey": settings.news_api_key,
+            "pageSize": 20,
+            "sortBy": "publishedAt",
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(settings.news_api_url, params=params)
+            response.raise_for_status()
+            payload = response.json()
+
+        articles = []
+        for item in payload.get("articles", []):
+            articles.append(
+                RawArticle(
+                    title=(item.get("title") or "").strip() or "Untitled",
+                    content_raw=(item.get("content") or item.get("description") or "").strip(),
+                    source=((item.get("source") or {}).get("name") or "newsapi").strip(),
+                    url=(item.get("url") or "").strip(),
+                    published_at=_parse_iso_datetime(item.get("publishedAt")),
+                )
+            )
+        return [article for article in articles if article.url]
+
+
+def _extract_entry_content(entry: dict) -> str:
+    if entry.get("content"):
+        return (entry["content"][0].get("value") or "").strip()
+    return (entry.get("summary") or entry.get("description") or "").strip()
+
+
+def _parse_published_at(entry: dict) -> datetime | None:
+    published = entry.get("published") or entry.get("updated")
+    if not published:
+        return None
+    try:
+        return parsedate_to_datetime(published)
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+========================================================================================================================
+FILE: backend\app\services\llm\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\services\llm\groq_gateway.py
+========================================================================================================================
+
+from __future__ import annotations
+
+import time
+
+import httpx
+
+from app.core.config import get_settings
+
+
+class GroqGateway:
+    def __init__(self) -> None:
+        self.settings = get_settings()
+
+    async def complete(self, messages: list[dict], temperature: float = 0.1) -> dict:
+        models = [
+            self.settings.groq_model_primary,
+            self.settings.groq_model_fallback,
+            self.settings.groq_model_fast,
+        ]
+        last_error = None
+
+        for index, model in enumerate(models):
+            started = time.perf_counter()
+            try:
+                async with httpx.AsyncClient(timeout=self.settings.groq_timeout_seconds) as client:
+                    response = await client.post(
+                        self.settings.groq_api_url,
+                        headers={
+                            "Authorization": f"Bearer {self.settings.groq_api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": model,
+                            "messages": messages,
+                            "temperature": temperature,
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                continue
+
+            content = payload["choices"][0]["message"]["content"]
+            return {
+                "text": content,
+                "provider": self.settings.llm_provider,
+                "model": model,
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "degraded_mode": None if index == 0 else "llm_fallback",
+            }
+
+        raise RuntimeError(f"All Groq models failed: {last_error}")
+
+========================================================================================================================
+FILE: backend\app\services\nlp\pipeline.py
+========================================================================================================================
+
+import re
+
+from app.models.article import Article
+from app.services.nlp.schemas import ExtractedEntity, ExtractedRelation
+
+KNOWN_ORGANIZATIONS = {
+    "amazon",
+    "anthropic",
+    "apple",
+    "blue origin",
+    "byd",
+    "doordash",
+    "google",
+    "kalshi",
+    "meta",
+    "microsoft",
+    "newegg",
+    "nvidia",
+    "openai",
+    "palantir",
+    "paramount plus",
+    "pinterest",
+    "strava",
+    "tesla",
+    "tinder",
+    "twitter",
+    "wordpress",
+}
+ORG_MARKERS = {
+    "inc",
+    "corp",
+    "corporation",
+    "company",
+    "ltd",
+    "llc",
+    "gmbh",
+    "group",
+    "labs",
+    "technologies",
+    "банк",
+    "компания",
+}
+KNOWN_LOCATIONS = {
+    "moscow",
+    "london",
+    "paris",
+    "berlin",
+    "san francisco",
+    "new york",
+    "washington",
+    "tokyo",
+    "beijing",
+    "kyiv",
+    "minsk",
+}
+INVALID_ENTITY_PREFIXES = {
+    "a",
+    "amid",
+    "aren",
+    "are",
+    "at",
+    "best",
+    "can",
+    "how",
+    "it",
+    "new",
+    "the",
+    "there",
+    "this",
+    "what",
+    "why",
+}
+INVALID_ENTITY_TOKENS = {
+    "accidentally",
+    "almost",
+    "ban",
+    "bet",
+    "calls",
+    "coming",
+    "conference",
+    "court",
+    "crazy",
+    "developers",
+    "disappoints",
+    "filing",
+    "future",
+    "game",
+    "gamers",
+    "governments",
+    "gtc",
+    "happened",
+    "hate",
+    "investors",
+    "jury",
+    "legal",
+    "misled",
+    "project",
+    "reveals",
+    "robot",
+    "says",
+    "scientists",
+    "street",
+    "turmoil",
+    "users",
+    "wall",
+    "week",
+    "win",
+}
+PERSON_TITLE_PREFIXES = {"ceo", "cto", "founder", "president"}
+PERSON_NAME_STOPWORDS = {
+    "about",
+    "ai",
+    "aren",
+    "been",
+    "built",
+    "code",
+    "could",
+    "coupon",
+    "culture",
+    "denies",
+    "dm",
+    "dms",
+    "end-to-end",
+    "ev",
+    "excited",
+    "fun",
+    "gas",
+    "get",
+    "girl",
+    "has",
+    "if",
+    "instagram",
+    "is",
+    "it",
+    "killing",
+    "plus",
+    "promo",
+    "retreat",
+    "sabotage",
+    "seem",
+    "shy",
+}
+
+
+def extract_entities(article: Article) -> list[ExtractedEntity]:
+    text = build_analysis_text(article)
+    candidates = re.findall(r"\b[A-ZА-Я][a-zа-яA-ZА-Я-]+(?:\s+[A-ZА-Я][a-zа-яA-ZА-Я-]+){0,2}\b", text)
+    entities: dict[tuple[str, str], ExtractedEntity] = {}
+    for candidate in candidates:
+        candidate = sanitize_entity_candidate(candidate)
+        if not is_valid_entity_candidate(candidate):
+            continue
+        entity_type = classify_entity(candidate)
+        if entity_type is None:
+            continue
+        normalized = normalize_entity_name(candidate)
+        entities[(normalized, entity_type)] = ExtractedEntity(
+            name=candidate.strip(),
+            entity_type=entity_type,
+            normalized_name=normalized,
+        )
+
+    lower_text = text.lower()
+    for organization in KNOWN_ORGANIZATIONS:
+        if organization in lower_text:
+            entities[(organization, "ORGANIZATION")] = ExtractedEntity(
+                name=organization.title(),
+                entity_type="ORGANIZATION",
+                normalized_name=organization,
+            )
+    for location in KNOWN_LOCATIONS:
+        if location in lower_text:
+            entities[(location, "LOCATION")] = ExtractedEntity(
+                name=location.title(),
+                entity_type="LOCATION",
+                normalized_name=location,
+            )
+    return list(entities.values())
+
+
+def extract_relations(article: Article, entities: list[ExtractedEntity]) -> list[ExtractedRelation]:
+    text = build_analysis_text(article)
+    relations: list[ExtractedRelation] = []
+    by_normalized = {entity.normalized_name: entity for entity in entities}
+    sentences = split_sentences(text)
+
+    works_patterns = [
+        re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})\s+(?:works at|joined|leads|heads)\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"),
+        re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2}),?\s+(?:CEO|CTO|founder|president)\s+of\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"),
+        re.compile(r"(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})\s+(?:CEO|CTO|founder|president)\s+(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})"),
+        re.compile(r"(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})\s+(?:hired|appointed|named)\s+(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})"),
+        re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})\s+(?:at|from)\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"),
+    ]
+    location_patterns = [
+        re.compile(r"(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})\s+(?:is based in|headquartered in|located in|opens in|expands to)\s+(?P<loc>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})")
+    ]
+
+    for pattern in works_patterns:
+        for match in pattern.finditer(text):
+            person = by_normalized.get(normalize_entity_name(match.group("person")))
+            org = by_normalized.get(normalize_entity_name(match.group("org")))
+            if person and org:
+                relations.append(
+                    ExtractedRelation(
+                        source_name=person.name,
+                        source_type=person.entity_type,
+                        relation_type="ASSOCIATED_WITH",
+                        target_name=org.name,
+                        target_type=org.entity_type,
+                    )
+                )
+
+    for pattern in location_patterns:
+        for match in pattern.finditer(text):
+            org = by_normalized.get(normalize_entity_name(match.group("org")))
+            location = by_normalized.get(normalize_entity_name(match.group("loc")))
+            if org and location:
+                relations.append(
+                    ExtractedRelation(
+                        source_name=org.name,
+                        source_type=org.entity_type,
+                        relation_type="LOCATED_IN",
+                        target_name=location.name,
+                        target_type=location.entity_type,
+                    )
+                )
+
+    for sentence in sentences:
+        sentence_entities = entities_in_text(sentence, entities)
+        sentence_people = [entity for entity in sentence_entities if entity.entity_type == "PERSON"]
+        sentence_orgs = [entity for entity in sentence_entities if entity.entity_type == "ORGANIZATION"]
+        sentence_locations = [entity for entity in sentence_entities if entity.entity_type == "LOCATION"]
+
+        if sentence_people and sentence_orgs and len(sentence_entities) <= 6:
+            for person in sentence_people[:2]:
+                for org in sentence_orgs[:2]:
+                    relations.append(
+                        ExtractedRelation(
+                            source_name=person.name,
+                            source_type=person.entity_type,
+                            relation_type="ASSOCIATED_WITH",
+                            target_name=org.name,
+                            target_type=org.entity_type,
+                        )
+                    )
+
+        if sentence_orgs and sentence_locations and len(sentence_entities) <= 6:
+            for org in sentence_orgs[:2]:
+                for location in sentence_locations[:2]:
+                    relations.append(
+                        ExtractedRelation(
+                            source_name=org.name,
+                            source_type=org.entity_type,
+                            relation_type="LOCATED_IN",
+                            target_name=location.name,
+                            target_type=location.entity_type,
+                        )
+                    )
+
+    people = [entity for entity in entities if entity.entity_type == "PERSON"]
+    organizations = [entity for entity in entities if entity.entity_type == "ORGANIZATION"]
+    locations = [entity for entity in entities if entity.entity_type == "LOCATION"]
+    title_entities = entities_in_text(article.title, entities)
+    title_people = [entity for entity in title_entities if entity.entity_type == "PERSON"]
+    title_orgs = [entity for entity in title_entities if entity.entity_type == "ORGANIZATION"]
+    title_locations = [entity for entity in title_entities if entity.entity_type == "LOCATION"]
+
+    if not relations and title_people and title_orgs:
+        for person in title_people[:2]:
+            for org in title_orgs[:2]:
+                relations.append(
+                    ExtractedRelation(
+                        source_name=person.name,
+                        source_type=person.entity_type,
+                        relation_type="ASSOCIATED_WITH",
+                        target_name=org.name,
+                        target_type=org.entity_type,
+                    )
+                )
+
+    if not relations and title_orgs and title_locations:
+        for org in title_orgs[:2]:
+            for location in title_locations[:2]:
+                relations.append(
+                    ExtractedRelation(
+                        source_name=org.name,
+                        source_type=org.entity_type,
+                        relation_type="LOCATED_IN",
+                        target_name=location.name,
+                        target_type=location.entity_type,
+                    )
+                )
+
+    if not relations and len(people) == 1 and organizations:
+        for org in organizations[:2]:
+            relations.append(
+                ExtractedRelation(
+                    source_name=people[0].name,
+                    source_type=people[0].entity_type,
+                    relation_type="ASSOCIATED_WITH",
+                    target_name=org.name,
+                    target_type=org.entity_type,
+                )
+            )
+
+    if not relations and len(organizations) == 1 and locations:
+        for location in locations[:2]:
+            relations.append(
+                ExtractedRelation(
+                    source_name=organizations[0].name,
+                    source_type=organizations[0].entity_type,
+                    relation_type="LOCATED_IN",
+                    target_name=location.name,
+                    target_type=location.entity_type,
+                )
+            )
+
+    deduplicated: dict[tuple[str, str, str, str, str], ExtractedRelation] = {}
+    for relation in relations:
+        key = (
+            normalize_entity_name(relation.source_name),
+            relation.source_type,
+            relation.relation_type,
+            normalize_entity_name(relation.target_name),
+            relation.target_type,
+        )
+        if is_valid_relation(relation):
+            deduplicated[key] = relation
+    return list(deduplicated.values())
+
+
+def classify_entity(value: str) -> str | None:
+    lowered = value.lower()
+    parts = lowered.split()
+    if lowered in KNOWN_LOCATIONS:
+        return "LOCATION"
+    if lowered in KNOWN_ORGANIZATIONS:
+        return "ORGANIZATION"
+    if any(marker in parts or marker in lowered for marker in ORG_MARKERS):
+        return "ORGANIZATION"
+    if 2 <= len(parts) <= 3:
+        return "PERSON"
+    return None
+
+
+def build_analysis_text(article: Article) -> str:
+    segments = [article.title.strip(), article.content_clean.strip()]
+    return ". ".join(segment for segment in segments if segment)
+
+
+def normalize_entity_name(name: str) -> str:
+    return re.sub(r"\s+", " ", name).strip().lower()
+
+
+def split_sentences(text: str) -> list[str]:
+    return [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]
+
+
+def entities_in_text(text: str, entities: list[ExtractedEntity]) -> list[ExtractedEntity]:
+    lowered = text.lower()
+    return [entity for entity in entities if entity.normalized_name in lowered]
+
+
+def is_valid_entity_candidate(value: str) -> bool:
+    lowered = normalize_entity_name(value)
+    parts = lowered.split()
+    if len(parts) < 2:
+        return False
+    if parts[0] in INVALID_ENTITY_PREFIXES:
+        return False
+    if any(token in INVALID_ENTITY_TOKENS for token in parts):
+        return False
+    if lowered.endswith("'s"):
+        return False
+    return True
+
+
+def sanitize_entity_candidate(value: str) -> str:
+    parts = value.strip().split()
+    if len(parts) >= 3 and parts[0].lower() in PERSON_TITLE_PREFIXES:
+        parts = parts[1:]
+    return " ".join(parts)
+
+
+def is_valid_relation(relation: ExtractedRelation) -> bool:
+    if relation.relation_type == "LOCATED_IN":
+        return relation.source_type == "ORGANIZATION" and relation.target_type == "LOCATION"
+    if relation.relation_type == "ASSOCIATED_WITH":
+        return (
+            relation.source_type == "PERSON"
+            and relation.target_type == "ORGANIZATION"
+            and looks_like_person_name(relation.source_name)
+        )
+    return True
+
+
+def looks_like_person_name(value: str) -> bool:
+    parts = normalize_entity_name(value).split()
+    if not 2 <= len(parts) <= 3:
+        return False
+    if any(part in PERSON_NAME_STOPWORDS for part in parts):
+        return False
+    if parts[0] in KNOWN_ORGANIZATIONS:
+        return False
+    return True
+
+========================================================================================================================
+FILE: backend\app\services\nlp\schemas.py
+========================================================================================================================
+
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class ExtractedEntity:
+    name: str
+    entity_type: str
+    normalized_name: str
+
+
+@dataclass(slots=True)
+class ExtractedRelation:
+    source_name: str
+    source_type: str
+    relation_type: str
+    target_name: str
+    target_type: str
+
+========================================================================================================================
+FILE: backend\app\services\rag\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\services\rag\service.py
+========================================================================================================================
+
+from __future__ import annotations
+
+import json
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.schemas.search import SearchResponse
+from app.services.llm.groq_gateway import GroqGateway
+from app.services.retrieval.service import RetrievalResult, RetrievalService
+
+
+class RagService:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.settings = get_settings()
+        self.retrieval_service = RetrievalService(session)
+        self.llm_gateway = GroqGateway()
+
+    async def answer(
+        self,
+        question: str,
+        top_k: int,
+        use_graph: bool,
+        filters: dict | None = None,
+    ) -> SearchResponse:
+        retrieval = await self.retrieval_service.retrieve(question, top_k=top_k, filters=filters, use_graph=use_graph)
+        if not retrieval.articles:
+            return SearchResponse(
+                answer="No relevant articles were found for this question.",
+                sources=[],
+                entities=[],
+                graph_edges=[],
+                retrieval_debug={
+                    "vector_hits": 0,
+                    "graph_hits": 0,
+                    "llm_provider": None,
+                    "llm_model": None,
+                    "degraded_mode": None,
+                },
+                confidence=0.0,
+                status="no_relevant_articles",
+            )
+
+        messages = build_rag_messages(question=question, retrieval=retrieval)
+        try:
+            llm_result = await self.llm_gateway.complete(messages=messages)
+            parsed = parse_llm_output(llm_result["text"])
+            answer = parsed["answer"]
+            confidence = parsed["confidence"]
+            status = "success" if llm_result["degraded_mode"] is None else "degraded"
+            degraded_mode = llm_result["degraded_mode"]
+        except Exception:
+            llm_result = {"provider": None, "model": None}
+            answer = build_retrieval_only_answer(retrieval)
+            confidence = 0.35
+            status = "degraded"
+            degraded_mode = "retrieval_only"
+
+        return SearchResponse(
+            answer=answer,
+            sources=[
+                {
+                    "article_id": article.article_id,
+                    "title": article.title,
+                    "url": article.url,
+                    "source": article.source,
+                }
+                for article in retrieval.articles
+            ],
+            entities=[{"name": entity["name"], "type": entity["type"]} for entity in retrieval.entities],
+            graph_edges=[
+                {
+                    "from": edge.from_name,
+                    "relation": edge.relation,
+                    "to": edge.to_name,
+                    "source_article_ids": edge.source_article_ids,
+                }
+                for edge in retrieval.graph_edges
+            ],
+            retrieval_debug={
+                "vector_hits": len(retrieval.articles),
+                "graph_hits": len(retrieval.graph_edges),
+                "llm_provider": llm_result["provider"],
+                "llm_model": llm_result["model"],
+                "degraded_mode": degraded_mode,
+            },
+            confidence=confidence,
+            status=status,
+        )
+
+
+def build_rag_messages(question: str, retrieval: RetrievalResult) -> list[dict]:
+    article_lines = []
+    for article in retrieval.articles[:5]:
+        article_lines.append(
+            "\n".join(
+                [
+                    f"article_id: {article.article_id}",
+                    f"title: {article.title}",
+                    f"source: {article.source}",
+                    f"published_at: {article.published_at.isoformat() if article.published_at else 'unknown'}",
+                    f"url: {article.url}",
+                    f"snippet: {article.snippet}",
+                ]
+            )
+        )
+
+    graph_lines = [
+        f"{edge.from_name} | {edge.relation} | {edge.to_name} | source_article_ids={edge.source_article_ids}"
+        for edge in retrieval.graph_edges[:20]
+    ]
+
+    system = (
+        "You answer only from the supplied context. Do not invent facts. "
+        "If context is insufficient, say so explicitly. Separate fact from interpretation. "
+        "Return strict JSON with keys: answer, used_sources, mentioned_entities, confidence."
+    )
+    user = "\n\n".join(
+        [
+            f"Question: {question}",
+            "News context:",
+            "\n\n".join(article_lines),
+            "Graph context:",
+            "\n".join(graph_lines) or "none",
+        ]
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def parse_llm_output(text: str) -> dict:
+    try:
+        payload = json.loads(text)
+        return {
+            "answer": payload.get("answer") or text,
+            "confidence": float(payload.get("confidence", 0.6)),
+        }
+    except Exception:  # noqa: BLE001
+        return {"answer": text.strip(), "confidence": 0.55}
+
+
+def build_retrieval_only_answer(retrieval: RetrievalResult) -> str:
+    lines = ["Generation was unavailable. Relevant retrieved articles:"]
+    for article in retrieval.articles[:5]:
+        lines.append(f"- {article.title} ({article.source})")
+    if retrieval.graph_edges:
+        lines.append("Graph signals:")
+        for edge in retrieval.graph_edges[:5]:
+            lines.append(f"- {edge.from_name} {edge.relation} {edge.to_name}")
+    return "\n".join(lines)
+
+========================================================================================================================
+FILE: backend\app\services\retrieval\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\services\retrieval\service.py
+========================================================================================================================
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import get_settings
+from app.models.article import Article
+from app.services.embeddings.service import EmbeddingService
+from app.services.graph.neo4j import Neo4jGraphService
+from app.services.vector_store.service import VectorStoreService
+
+
+@dataclass(slots=True)
+class RetrievedArticle:
+    article_id: int
+    title: str
+    source: str
+    url: str
+    published_at: datetime | None
+    cluster_id: int | None
+    score: float
+    snippet: str
+    entity_names: list[str]
+
+
+@dataclass(slots=True)
+class RetrievedGraphEdge:
+    from_name: str
+    relation: str
+    to_name: str
+    source_article_ids: list[int]
+
+
+@dataclass(slots=True)
+class RetrievalResult:
+    articles: list[RetrievedArticle]
+    entities: list[dict]
+    graph_edges: list[RetrievedGraphEdge]
+    graph_available: bool
+
+
+class RetrievalService:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.settings = get_settings()
+        self.embedding_service = EmbeddingService()
+
+    async def semantic_search(self, query: str, top_k: int, filters: dict | None = None) -> list[RetrievedArticle]:
+        query_embedding = await self.embedding_service.generate(article_id=0, title=query, content_clean="", language="")
+        if query_embedding.status != "ready" or not query_embedding.embedding:
+            return []
+
+        vector_store = VectorStoreService()
+        try:
+            hits = await vector_store.search(query_embedding.embedding, top_k=top_k * 3, filters=filters)
+        finally:
+            await vector_store.close()
+
+        article_ids = [int(hit.id) for hit in hits]
+        if not article_ids:
+            return []
+
+        articles = await self.session.scalars(select(Article).where(Article.id.in_(article_ids)))
+        article_map = {article.id: article for article in articles}
+
+        ranked: list[RetrievedArticle] = []
+        for hit in hits:
+            article = article_map.get(int(hit.id))
+            if article is None:
+                continue
+            payload = hit.payload or {}
+            ranked.append(
+                RetrievedArticle(
+                    article_id=article.id,
+                    title=article.title,
+                    source=article.source,
+                    url=article.url,
+                    published_at=article.published_at,
+                    cluster_id=article.cluster_id,
+                    score=apply_freshness_boost(float(hit.score), article.published_at),
+                    snippet=(article.content_clean or article.title)[: self.settings.rag_max_article_snippet_chars],
+                    entity_names=list(payload.get("entity_names") or []),
+                )
+            )
+
+        ranked.sort(key=lambda item: item.score, reverse=True)
+        return ranked[:top_k]
+
+    async def retrieve(self, question: str, top_k: int, filters: dict | None = None, use_graph: bool = True) -> RetrievalResult:
+        articles = await self.semantic_search(question, top_k=top_k, filters=filters)
+        if not articles:
+            return RetrievalResult(articles=[], entities=[], graph_edges=[], graph_available=True)
+
+        if not use_graph:
+            return RetrievalResult(articles=articles, entities=[], graph_edges=[], graph_available=False)
+
+        graph_service = Neo4jGraphService()
+        try:
+            graph_context = await graph_service.get_context(
+                article_ids=[article.article_id for article in articles],
+                max_entities=self.settings.graph_max_entities,
+                max_relations=self.settings.graph_max_relations,
+            )
+            graph_available = True
+        except Exception:  # noqa: BLE001
+            graph_context = {"entities": [], "edges": []}
+            graph_available = False
+        finally:
+            await graph_service.close()
+
+        return RetrievalResult(
+            articles=articles,
+            entities=graph_context["entities"],
+            graph_edges=[
+                RetrievedGraphEdge(
+                    from_name=edge["from"],
+                    relation=edge["relation"],
+                    to_name=edge["to"],
+                    source_article_ids=edge["source_article_ids"],
+                )
+                for edge in graph_context["edges"]
+            ],
+            graph_available=graph_available,
+        )
+
+
+def apply_freshness_boost(score: float, published_at: datetime | None) -> float:
+    if published_at is None:
+        return score
+    now = datetime.now(UTC)
+    published = published_at if published_at.tzinfo else published_at.replace(tzinfo=UTC)
+    if published >= now - timedelta(days=7):
+        return score + 0.05
+    return score
+
+========================================================================================================================
+FILE: backend\app\services\vector_store\__init__.py
+========================================================================================================================
+
+
+
+========================================================================================================================
+FILE: backend\app\services\vector_store\service.py
+========================================================================================================================
+
+import asyncio
+from datetime import datetime
+
+import httpx
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+
+from app.core.config import get_settings
+
+
+class VectorStoreService:
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        self.client = QdrantClient(host=self.settings.qdrant_host, port=self.settings.qdrant_port)
+
+    async def close(self) -> None:
+        await asyncio.to_thread(self.client.close)
+
+    async def ensure_collection(self) -> None:
+        await asyncio.to_thread(self._ensure_collection_sync)
+
+    def _ensure_collection_sync(self) -> None:
+        collections = self.client.get_collections().collections
+        if any(collection.name == self.settings.qdrant_collection for collection in collections):
+            return
+        self.client.create_collection(
+            collection_name=self.settings.qdrant_collection,
+            vectors_config=models.VectorParams(
+                size=self.settings.embedding_dimension,
+                distance=models.Distance.COSINE,
+            ),
+        )
+
+    async def upsert_article_embedding(self, article_id: int, embedding: list[float], payload: dict) -> None:
+        await self.ensure_collection()
+        await asyncio.to_thread(
+            self.client.upsert,
+            collection_name=self.settings.qdrant_collection,
+            points=[
+                models.PointStruct(
+                    id=article_id,
+                    vector=embedding,
+                    payload=payload,
+                )
+            ],
+            wait=True,
+        )
+
+    async def search(
+        self,
+        query_embedding: list[float],
+        top_k: int,
+        filters: dict | None = None,
+    ) -> list[models.ScoredPoint]:
+        await self.ensure_collection()
+        query_filter = build_qdrant_filter(filters or {})
+        return await asyncio.to_thread(
+            self.client.search,
+            collection_name=self.settings.qdrant_collection,
+            query_vector=query_embedding,
+            query_filter=query_filter,
+            limit=top_k,
+            with_payload=True,
+        )
+
+    async def update_cluster_metadata(self, article_id: int, cluster_id: int | None) -> None:
+        await self.ensure_collection()
+        await asyncio.to_thread(
+            self.client.set_payload,
+            collection_name=self.settings.qdrant_collection,
+            payload={"cluster_id": cluster_id},
+            points=[article_id],
+            wait=True,
+        )
+
+    async def delete_article(self, article_id: int) -> None:
+        await self.ensure_collection()
+        await asyncio.to_thread(
+            self.client.delete,
+            collection_name=self.settings.qdrant_collection,
+            points_selector=models.PointIdsList(points=[article_id]),
+            wait=True,
+        )
+
+    async def fetch_ready_points(self) -> list[models.Record]:
+        await self.ensure_collection()
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"http://{self.settings.qdrant_host}:{self.settings.qdrant_port}/collections/{self.settings.qdrant_collection}/points/scroll",
+                json={
+                    "limit": 10000,
+                    "with_payload": True,
+                    "with_vector": True,
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+        points = payload.get("result", {}).get("points", [])
+        return [
+            models.Record(
+                id=point["id"],
+                payload=point.get("payload") or {},
+                vector=point.get("vector"),
+            )
+            for point in points
+            if point.get("vector")
+        ]
+
+
+def build_qdrant_filter(filters: dict) -> models.Filter | None:
+    conditions: list[models.FieldCondition] = []
+    should_conditions: list[models.FieldCondition] = []
+
+    source = filters.get("source")
+    sources = filters.get("sources")
+    if source:
+        conditions.append(models.FieldCondition(key="source", match=models.MatchValue(value=source)))
+    elif sources:
+        should_conditions.extend([models.FieldCondition(key="source", match=models.MatchValue(value=item)) for item in sources])
+
+    language = filters.get("language")
+    if language:
+        conditions.append(models.FieldCondition(key="language", match=models.MatchValue(value=language)))
+
+    date_from = filters.get("date_from")
+    date_to = filters.get("date_to")
+    if date_from or date_to:
+        conditions.append(
+            models.FieldCondition(
+                key="published_at_ts",
+                range=models.Range(
+                    gte=to_timestamp(date_from) if date_from else None,
+                    lte=to_timestamp(date_to, end_of_day=True) if date_to else None,
+                ),
+            )
+        )
+
+    if not conditions and not should_conditions:
+        return None
+    return models.Filter(must=conditions, should=should_conditions or None)
+
+
+def to_timestamp(value: datetime | str, end_of_day: bool = False) -> int:
+    if isinstance(value, str):
+        parsed = datetime.fromisoformat(f"{value}T23:59:59" if end_of_day else f"{value}T00:00:00")
+    else:
+        parsed = value
+    return int(parsed.timestamp())
+
+========================================================================================================================
+FILE: backend\pytest.ini
+========================================================================================================================
+
+[pytest]
+pythonpath = .
+asyncio_default_fixture_loop_scope = function
+
+========================================================================================================================
+FILE: backend\requirements-runtime.txt
+========================================================================================================================
+
+apscheduler==3.11.0
+asyncpg==0.30.0
+beautifulsoup4==4.13.3
+feedparser==6.0.11
+fastapi==0.115.12
+hdbscan==0.8.40
+httpx==0.28.1
+langdetect==1.0.9
+neo4j==5.28.1
+numpy==2.2.4
+pydantic-settings==2.8.1
+python-dateutil==2.9.0.post0
+qdrant-client==1.14.2
+redis==5.2.1
+scikit-learn==1.6.1
+sentence-transformers==4.0.2
+sqlalchemy==2.0.39
+uvicorn[standard]==0.34.0
+
+
+========================================================================================================================
+FILE: backend\requirements.txt
+========================================================================================================================
+
+apscheduler==3.11.0
+asyncpg==0.30.0
+beautifulsoup4==4.13.3
+feedparser==6.0.11
+fastapi==0.115.12
+hdbscan==0.8.40
+httpx==0.28.1
+langdetect==1.0.9
+neo4j==5.28.1
+numpy==2.2.4
+pydantic-settings==2.8.1
+python-dateutil==2.9.0.post0
+qdrant-client==1.14.2
+redis==5.2.1
+scikit-learn==1.6.1
+sentence-transformers==4.0.2
+sqlalchemy==2.0.39
+uvicorn[standard]==0.34.0
+pytest==8.3.5
+pytest-asyncio==0.25.3
+
+========================================================================================================================
+FILE: backend\tests\test_phase45.py
+========================================================================================================================
+
+import numpy as np
+import pytest
+
+from app.services.clustering.service import cluster_vectors
+from app.services.embeddings.service import build_embedding_input
+from app.services.rag.service import RagService
+from app.services.retrieval.service import RetrievalResult, RetrievedArticle, RetrievedGraphEdge
+
+
+def test_build_embedding_input_truncates_and_uses_title() -> None:
+    content = "a" * 5000
+    result = build_embedding_input("Title", content)
+    assert result.startswith("Title\n\n")
+    assert len(result.split("\n\n", maxsplit=1)[1]) == 4000
+
+
+def test_cluster_vectors_uses_kmeans_for_small_dataset() -> None:
+    matrix = np.random.rand(10, 384).astype(np.float32)
+    labels, algorithm = cluster_vectors(matrix, hdbscan_threshold=50, min_cluster_size=5)
+    assert algorithm == "kmeans"
+    assert len(labels) == 10
+
+
+def test_cluster_vectors_uses_hdbscan_for_large_dataset() -> None:
+    matrix = np.random.rand(60, 384).astype(np.float32)
+    labels, algorithm = cluster_vectors(matrix, hdbscan_threshold=50, min_cluster_size=5)
+    assert algorithm == "hdbscan"
+    assert len(labels) == 60
+
+
+@pytest.mark.asyncio
+async def test_rag_returns_retrieval_only_when_llm_fails() -> None:
+    service = RagService(session=None)  # type: ignore[arg-type]
+    service.retrieval_service.retrieve = fake_retrieve  # type: ignore[method-assign]
+    service.llm_gateway.complete = fake_complete_failure  # type: ignore[method-assign]
+
+    response = await service.answer(question="What happened?", top_k=5, use_graph=True)
+
+    assert response.status == "degraded"
+    assert response.retrieval_debug.degraded_mode == "retrieval_only"
+    assert response.sources
+
+
+async def fake_retrieve(*args, **kwargs) -> RetrievalResult:  # noqa: ANN002, ANN003
+    del args, kwargs
+    return RetrievalResult(
+        articles=[
+            RetrievedArticle(
+                article_id=1,
+                title="Example article",
+                source="example",
+                url="https://example.com/article",
+                published_at=None,
+                cluster_id=1,
+                score=0.9,
+                snippet="Example snippet",
+                entity_names=["Example Org"],
+            )
+        ],
+        entities=[{"name": "Example Org", "type": "ORGANIZATION"}],
+        graph_edges=[RetrievedGraphEdge(from_name="Alice", relation="ASSOCIATED_WITH", to_name="Example Org", source_article_ids=[1])],
+        graph_available=True,
+    )
+
+
+async def fake_complete_failure(*args, **kwargs) -> dict:  # noqa: ANN002, ANN003
+    del args, kwargs
+    raise RuntimeError("llm unavailable")
+
+========================================================================================================================
+FILE: backend\tests\test_preprocess.py
+========================================================================================================================
+
+from app.services.ingestion.preprocess import clean_html, detect_language, normalize_text
+from app.services.nlp.pipeline import extract_entities
+
+
+class DummyArticle:
+    def __init__(self, title: str, content_clean: str) -> None:
+        self.title = title
+        self.content_clean = content_clean
+
+
+def test_clean_html_removes_tags() -> None:
+    assert clean_html("<p>Hello <b>world</b></p>") == "Hello world"
+
+
+def test_normalize_text_lowercases_and_compacts_whitespace() -> None:
+    assert normalize_text(" Hello   WORLD ") == "hello world"
+
+
+def test_detect_language_has_fallback() -> None:
+    assert detect_language("") in {"en", "ru"}
+
+
+def test_extract_entities_uses_title_and_known_orgs() -> None:
+    article = DummyArticle(
+        title="Jeff Bezos joins Blue Origin in New York",
+        content_clean="",
+    )
+    entities = {(entity.name, entity.entity_type) for entity in extract_entities(article)}
+    assert ("Jeff Bezos", "PERSON") in entities
+    assert ("Blue Origin", "ORGANIZATION") in entities
+    assert ("New York", "LOCATION") in entities
+
+========================================================================================================================
+FILE: docker-compose.yml
+========================================================================================================================
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health').read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./backend:/app/backend
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-itnews}
+      POSTGRES_USER: ${POSTGRES_USER:-itnews}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-itnews}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-itnews} -d ${POSTGRES_DB:-itnews}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-please-change-me}
+      NEO4J_server_memory_heap_initial__size: 256M
+      NEO4J_server_memory_heap_max__size: 512M
+      NEO4J_server_default__listen__address: 0.0.0.0
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-please-change-me} 'RETURN 1;' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  qdrant_data:
+
+========================================================================================================================
+FILE: docker\backend.Dockerfile
+========================================================================================================================
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN pip install --upgrade pip
+
+COPY backend/requirements-runtime.txt /tmp/requirements-runtime.txt
+RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.10.0+cpu \
+    && pip install -r /tmp/requirements-runtime.txt
+
+COPY backend /app/backend
+
+WORKDIR /app/backend
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+========================================================================================================================
+FILE: docs\architecture.md
+========================================================================================================================
+
+# Architecture
+
+Поток данных для MVP:
+
+1. Источники новостей загружаются через RSS и опционально NewsAPI.
+2. Сырой HTML очищается, текст нормализуется, язык определяется и статья сохраняется в PostgreSQL.
+3. Для статьи можно вручную запустить baseline NER и извлечение связей.
+4. Сущности и связи пишутся в Neo4j.
+5. Qdrant поднят как векторное хранилище для следующей итерации, но запись эмбеддингов пока не включена.
+
+Компоненты:
+
+- FastAPI backend: orchestration, API, scheduler, healthcheck.
+- PostgreSQL: хранение статей и метаданных ingestion.
+- Neo4j: граф знаний по статьям и сущностям.
+- Redis: инфраструктурный слой под будущие worker-задачи.
+- Qdrant: заготовка под semantic retrieval.
+
+========================================================================================================================
+FILE: docs\handoff_phase_1_3.md
+========================================================================================================================
+
+# Handoff: Phases 1-3
+
+## Статус
+
+- Фаза 1: закрыта baseline-реализацией. Локальный стек поднимается через Docker Compose, backend отвечает на `GET /health`, сервисные проверки по PostgreSQL, Neo4j, Redis и Qdrant проходят.
+- Фаза 2: закрыта baseline-реализацией. Ingestion читает минимум 3 RSS-источника и опционально NewsAPI, чистит HTML, нормализует текст, определяет язык и сохраняет статьи в PostgreSQL с дедупликацией по `url`.
+- Фаза 3: закрыта baseline-реализацией. Из статьи извлекаются `PERSON`, `ORGANIZATION`, `LOCATION`, после чего сущности и связи грузятся в Neo4j.
+
+## PostgreSQL schema
+
+Текущая схема создается автоматически при старте приложения.
+
+Таблица `articles`:
+
+- `id` integer primary key
+- `title` varchar(512) not null
+- `content_raw` text not null
+- `content_clean` text not null
+- `content_normalized` text not null
+- `source` varchar(255) not null
+- `url` varchar(1024) not null unique
+- `published_at` timestamptz null
+- `language` varchar(8) not null
+- `ingested_at` timestamptz not null default now()
+
+Индексы и ограничения:
+
+- `uq_articles_url`
+- `ix_articles_source_published_at`
+
+## Sources and status
+
+- `https://techcrunch.com/feed/` — active
+- `https://www.wired.com/feed/rss` — active
+- `https://feeds.arstechnica.com/arstechnica/index` — active
+- `NewsAPI` — optional, controlled by `ENABLE_NEWS_API` and local `NEWS_API_KEY`
+
+## NLP pipeline
+
+1. Берется `title + content_clean`.
+2. Rule-based entity extraction ищет title-cased последовательности и известные organization/location aliases.
+3. Entity classification относит кандидата к `PERSON`, `ORGANIZATION`, `LOCATION`.
+4. Relation extraction применяет baseline-patterns для `ASSOCIATED_WITH` и `LOCATED_IN`.
+5. В Neo4j статья связывается с сущностями через `MENTIONS`, а relations пишутся как `RELATED_TO {type: ...}`.
+
+## Neo4j schema
+
+Узлы:
+
+- `Article`
+- `Entity`
+- `Person`
+- `Organization`
+- `Location`
+
+Связи:
+
+- `(:Article)-[:MENTIONS]->(:Entity)`
+- `(:Entity)-[:RELATED_TO {type: "ASSOCIATED_WITH"}]->(:Entity)`
+- `(:Entity)-[:RELATED_TO {type: "LOCATED_IN"}]->(:Entity)`
+
+Ограничения:
+
+- unique `Article.article_id`
+- unique composite key `Entity(normalized_name, entity_type)`
+
+## Known limitations and technical debt
+
+- Миграции отсутствуют, схема создается через `metadata.create_all()`.
+- Scheduler встроен в процесс backend; для продовой эксплуатации его стоит вынести в отдельный worker/beat.
+- Quality NER/RE пока rule-based и заметно ограничено на русском, аббревиатурах и неоднозначных именах.
+- Эмбеддинги и запись в Qdrant пока не реализованы.
+- Дедупликация статей сейчас идет по `url`; для более шумных источников позже потребуется нормализация canonical URL и контентные сигнатуры.
+
+========================================================================================================================
+FILE: docs\handoff_phase_4_5.md
+========================================================================================================================
+
+# Handoff: Phases 4-5
+
+## Что добавлено
+
+- `embedding_service` на `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`
+- `vector_store_service` на Qdrant collection `news_articles`
+- `clustering_service` с `HDBSCAN` и fallback `KMeans`
+- batch indexing job и reclustering job через APScheduler
+- `GET /api/search/semantic`
+- `GET /api/clusters`
+- `llm_gateway` для Groq
+- `retrieval_service`
+- `rag_service`
+- `POST /api/search`
+
+## Изменения в данных
+
+В `articles` добавлены поля:
+
+- `embedding_status`
+- `embedding_model`
+- `embedded_at`
+- `cluster_id`
+- `clustered_at`
+- `embedding_error`
+- `embedding_attempts`
+
+Startup logic выполняет `ALTER TABLE ... IF NOT EXISTS`, чтобы обновить уже существующую PostgreSQL схему без отдельной миграции.
+
+## Retrieval and vector flow
+
+1. После ingestion статья получает `embedding_status = pending`.
+2. Job `/indexing/run` выбирает `pending/failed` статьи с retry limit.
+3. Формируется текст вида `title + content_clean[:4000]`.
+4. Генерируется L2-normalized embedding.
+5. Вектор и payload пишутся в Qdrant.
+6. В PostgreSQL обновляются `embedding_status`, `embedding_model`, `embedded_at`.
+7. Reclustering пишет `cluster_id` обратно в PostgreSQL и Qdrant payload.
+
+## Clustering rules
+
+- `< 50` векторов: `KMeans`
+- `>= 50` векторов: `HDBSCAN`
+- noise points HDBSCAN сохраняются как `cluster_id = -1`
+
+## RAG flow
+
+1. `POST /api/search` строит query embedding той же моделью.
+2. Retrieval идет в Qdrant.
+3. По top articles запрашиваются entities/relations из Neo4j.
+4. Контекст собирается из snippets и graph edges.
+5. Groq вызывается по очереди:
+   - `openai/gpt-oss-120b`
+   - `llama-3.3-70b-versatile`
+   - `llama-3.1-8b-instant`
+6. Если все модели недоступны, API возвращает retrieval-only ответ.
+
+## Env additions
+
+- `EMBEDDING_MODEL`
+- `EMBEDDING_DIMENSION`
+- `EMBEDDING_MAX_CHARS`
+- `EMBEDDING_MAX_RETRIES`
+- `EMBEDDING_INDEX_INTERVAL_MINUTES`
+- `CLUSTERING_INTERVAL_MINUTES`
+- `CLUSTERING_HDBSCAN_THRESHOLD`
+- `CLUSTERING_MIN_CLUSTER_SIZE`
+- `LLM_PROVIDER`
+- `GROQ_API_KEY`
+- `GROQ_MODEL_PRIMARY`
+- `GROQ_MODEL_FALLBACK`
+- `GROQ_MODEL_FAST`
+- `GROQ_API_URL`
+- `GROQ_TIMEOUT_SECONDS`
+- `RAG_TOP_K`
+- `GRAPH_MAX_ENTITIES`
+- `GRAPH_MAX_RELATIONS`
+- `RAG_MAX_ARTICLE_SNIPPET_CHARS`
+- `RAG_CONTEXT_TOKEN_BUDGET`
+
+## Проверки
+
+Локально подтверждено:
+
+- Python import приложения проходит
+- `pytest` проходит: 8 tests passed
+- покрыты ветки embedding input, clustering selection, degraded RAG
+
+Отдельно:
+
+- контейнерная интеграционная проверка фаз 4-5 была заблокирована локальным сбоем Docker Desktop engine (`500 Internal Server Error` на Docker API) во время пересборки тяжелого backend image с `torch`.
+
+## Известные ограничения
+
+- Embedding model скачивается при первом запуске, что увеличивает время cold start.
+- RAG output пока парсится best-effort из JSON/text, без строгого structured output enforcement.
+- Freshness boost реализован простым score offset.
+- Для multi-source filter в RAG используется OR-фильтр в Qdrant без отдельного reranker.
+
+========================================================================================================================
+FILE: README.md
+========================================================================================================================
+
+# IT News Platform
+
+Каркас платформы для сбора IT-новостей, очистки текста, извлечения сущностей и загрузки графа знаний.
+
+## Реализовано
+
+- Инфраструктура: FastAPI, PostgreSQL, Neo4j, Redis, Qdrant, Docker Compose, healthcheck.
+- Ingestion: RSS для 3 источников, опциональный NewsAPI, очистка HTML, нормализация текста, language detection, дедупликация по URL.
+- NLP/Graph: baseline rule-based NER и relation extraction, загрузка `Article` и `Entity`-графа в Neo4j.
+- Embeddings/Vector: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, Qdrant collection `news_articles`, batch indexing и semantic search.
+- Clustering: `HDBSCAN` с fallback на `KMeans`, cluster summary endpoint, синхронизация `cluster_id` между PostgreSQL и Qdrant.
+- RAG: retrieval из Qdrant и Neo4j, Groq gateway с fallback по 3 моделям и retrieval-only degradation.
+
+## Структура
+
+```text
+backend/
+frontend/
+docker/
+docs/
+```
+
+## Быстрый старт
+
+1. Скопировать `.env.example` в `.env`.
+2. Изменить секреты при необходимости.
+3. Выполнить `docker compose up --build`.
+4. Открыть `http://localhost:8000/health`.
+
+## API
+
+- `GET /health`
+- `POST /ingestion/run`
+- `POST /indexing/run`
+- `POST /clustering/run`
+- `GET /articles`
+- `POST /articles/{article_id}/graph`
+- `GET /api/search/semantic`
+- `GET /api/clusters`
+- `POST /api/search`
+
+## Модель Article
+
+- `id`
+- `title`
+- `content_raw`
+- `content_clean`
+- `content_normalized`
+- `source`
+- `url`
+- `published_at`
+- `language`
+- `embedding_status`
+- `embedding_model`
+- `embedded_at`
+- `cluster_id`
+- `clustered_at`
+- `embedding_error`
+- `ingested_at`
+
+## Источники по умолчанию
+
+- TechCrunch RSS
+- Wired RSS
+- Ars Technica RSS
+
+## Схема графа
+
+Узлы:
+
+- `Article`
+- `Entity`
+- `Person`
+- `Organization`
+- `Location`
+
+Связи:
+
+- `(:Article)-[:MENTIONS]->(:Entity)`
+- `(:Entity)-[:RELATED_TO {type: "..."}]->(:Entity)`
+
+## Известные ограничения
+
+- NER и relation extraction реализованы эвристиками и дают только baseline-качество.
+- Планировщик встроен в backend через APScheduler; при росте нагрузки его стоит вынести в отдельный worker.
+- Миграции схемы БД пока заменены startup-изменениями через `ALTER TABLE ... IF NOT EXISTS`.
+- `sentence-transformers` и `torch` делают backend-образ заметно тяжелее.
+- RAG ответ зависит от доступности Groq; при ошибках генерации endpoint уходит в retrieval-only режим.
