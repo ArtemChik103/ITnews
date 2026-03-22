@@ -140,14 +140,14 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
         name: 'cose',
         animate: false,
         fit: true,
-        padding: 40,
-        nodeRepulsion: () => 5000,
-        idealEdgeLength: () => 80,
-        gravity: 0.8,
-        numIter: 300,
-        nodeDimensionsIncludeLabels: true,
+        padding: 50,
+        nodeRepulsion: () => 3000,
+        idealEdgeLength: () => 60,
+        gravity: 1.2,
+        numIter: 500,
+        nodeDimensionsIncludeLabels: false,
       },
-      minZoom: 0.3,
+      minZoom: 0.15,
       maxZoom: 3,
     });
 
@@ -156,9 +156,11 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
       onNodeClick?.(node.id(), node.data('label'));
     });
 
-    // Fit to viewport after layout
+    // Always fit all nodes into viewport after layout
     cy.one('layoutstop', () => {
-      cy.fit(undefined, 30);
+      cy.fit(undefined, 50);
+      // If still too zoomed in, zoom out more
+      if (cy.zoom() > 1.2) cy.zoom({ level: 1.0, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
     });
 
     cyRef.current = cy;
