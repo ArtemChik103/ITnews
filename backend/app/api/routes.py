@@ -190,7 +190,7 @@ async def get_graph(
 
     nodes = [
         GraphNode(
-            id=n.get("id", n["name"].lower().replace(" ", "_")),
+            id=n.get("id", n["name"]).lower().replace(" ", "_"),
             label=n["name"],
             type=n.get("type", "Entity"),
             metadata={},
