@@ -44,7 +44,7 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
       .filter((e) => {
         const srcId = e.from.toLowerCase().replace(/\s+/g, '_');
         const tgtId = e.to.toLowerCase().replace(/\s+/g, '_');
-        return nodeIds.has(srcId) && nodeIds.has(tgtId);
+        return nodeIds.has(srcId) && nodeIds.has(tgtId) && srcId !== tgtId;
       })
       .map((e, i) => ({
         data: {
@@ -55,7 +55,18 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
         },
       }));
 
-    return [...nodeEls.map((n) => ({ group: 'nodes' as const, ...n })), ...edgeEls.map((e) => ({ group: 'edges' as const, ...e }))];
+    // Remove isolated nodes (no connections) to keep graph clean
+    const connectedIds = new Set<string>();
+    for (const e of edgeEls) {
+      connectedIds.add(e.data.source);
+      connectedIds.add(e.data.target);
+    }
+    const filteredNodes = nodeEls.filter((n) => connectedIds.has(n.data.id));
+
+    return [
+      ...filteredNodes.map((n) => ({ group: 'nodes' as const, ...n })),
+      ...edgeEls.map((e) => ({ group: 'edges' as const, ...e })),
+    ];
   }, [nodes, edges]);
 
   const initCy = useCallback(() => {
@@ -73,15 +84,19 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
             'background-color': 'data(color)',
             label: 'data(label)',
             color: '#f1f5f9',
-            'font-size': '11px',
+            'font-size': '12px',
+            'font-weight': 500,
             'text-valign': 'bottom',
-            'text-margin-y': 6,
-            width: 30,
-            height: 30,
+            'text-halign': 'center',
+            'text-margin-y': 8,
+            width: 36,
+            height: 36,
             'border-width': 2,
-            'border-color': 'rgba(255,255,255,0.2)',
-            'text-max-width': '80px',
-            'text-wrap': 'ellipsis',
+            'border-color': 'rgba(255,255,255,0.3)',
+            'text-max-width': '120px',
+            'text-wrap': 'wrap',
+            'text-outline-color': '#0f172a',
+            'text-outline-width': 2,
           },
         },
         {
@@ -89,27 +104,49 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
           style: {
             'border-width': 3,
             'border-color': '#fff',
-            width: 40,
-            height: 40,
+            width: 46,
+            height: 46,
           },
         },
         {
           selector: 'edge',
           style: {
-            width: 1.5,
-            'line-color': 'rgba(148,163,184,0.4)',
-            'target-arrow-color': 'rgba(148,163,184,0.4)',
+            width: 2,
+            'line-color': 'rgba(148,163,184,0.5)',
+            'target-arrow-color': 'rgba(148,163,184,0.5)',
             'target-arrow-shape': 'triangle',
             'curve-style': 'bezier',
+            // Edge labels hidden by default — too cluttered
+            'font-size': '0px',
+          },
+        },
+        {
+          // Show edge label on hover
+          selector: 'edge:active',
+          style: {
             label: 'data(label)',
-            'font-size': '9px',
-            color: '#94a3b8',
+            'font-size': '10px',
+            color: '#e2e8f0',
             'text-rotation': 'autorotate',
-            'text-margin-y': -8,
+            'text-outline-color': '#0f172a',
+            'text-outline-width': 2,
+            width: 3,
+            'line-color': '#60a5fa',
+            'target-arrow-color': '#60a5fa',
           },
         },
       ],
-      layout: { name: 'cose', animate: false, nodeRepulsion: () => 8000, idealEdgeLength: () => 100 },
+      layout: {
+        name: 'cose',
+        animate: false,
+        fit: true,
+        padding: 40,
+        nodeRepulsion: () => 5000,
+        idealEdgeLength: () => 80,
+        gravity: 0.8,
+        numIter: 300,
+        nodeDimensionsIncludeLabels: true,
+      },
       minZoom: 0.3,
       maxZoom: 3,
     });
@@ -117,6 +154,11 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
     cy.on('tap', 'node', (evt) => {
       const node = evt.target;
       onNodeClick?.(node.id(), node.data('label'));
+    });
+
+    // Fit to viewport after layout
+    cy.one('layoutstop', () => {
+      cy.fit(undefined, 30);
     });
 
     cyRef.current = cy;
