@@ -24,6 +24,69 @@ class Neo4jGraphService:
                 "CREATE CONSTRAINT entity_key IF NOT EXISTS FOR (e:Entity) REQUIRE (e.normalized_name, e.entity_type) IS UNIQUE"
             )
 
+    async def get_article_entities(self, article_id: int) -> list[str]:
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (:Article {article_id: $article_id})-[:MENTIONS]->(e:Entity)
+                RETURN e.name AS name
+                ORDER BY e.name
+                """,
+                article_id=article_id,
+            )
+            rows = await result.data()
+        return [row["name"] for row in rows]
+
+    async def get_context(self, article_ids: list[int], max_entities: int, max_relations: int) -> dict:
+        async with self.driver.session() as session:
+            entity_result = await session.run(
+                """
+                MATCH (a:Article)-[:MENTIONS]->(e:Entity)
+                WHERE a.article_id IN $article_ids
+                RETURN e.name AS name, e.entity_type AS type, count(DISTINCT a) AS mentions
+                ORDER BY mentions DESC, name ASC
+                LIMIT $max_entities
+                """,
+                article_ids=article_ids,
+                max_entities=max_entities,
+            )
+            entities = await entity_result.data()
+
+            relation_result = await session.run(
+                """
+                MATCH (a:Article)-[:MENTIONS]->(seed:Entity)
+                WHERE a.article_id IN $article_ids
+                WITH collect(DISTINCT seed.normalized_name) AS seed_names
+                MATCH (source:Entity)-[r:RELATED_TO]->(target:Entity)
+                WHERE source.normalized_name IN seed_names OR target.normalized_name IN seed_names
+                OPTIONAL MATCH (article:Article)-[:MENTIONS]->(source)
+                WHERE article.article_id IN $article_ids
+                RETURN source.name AS from_name,
+                       r.type AS relation,
+                       target.name AS to_name,
+                       collect(DISTINCT article.article_id) AS source_article_ids,
+                       size(collect(DISTINCT article.article_id)) AS source_count
+                ORDER BY source_count DESC, from_name ASC
+                LIMIT $max_relations
+                """,
+                article_ids=article_ids,
+                max_relations=max_relations,
+            )
+            edges = await relation_result.data()
+
+        return {
+            "entities": [{"name": item["name"], "type": item["type"]} for item in entities],
+            "edges": [
+                {
+                    "from": item["from_name"],
+                    "relation": item["relation"],
+                    "to": item["to_name"],
+                    "source_article_ids": [article_id for article_id in item["source_article_ids"] if article_id is not None],
+                }
+                for item in edges
+            ],
+        }
+
     async def upsert_article_graph(
         self,
         article: Article,

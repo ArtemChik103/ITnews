@@ -27,14 +27,40 @@ class Settings(BaseSettings):
 
     qdrant_host: str = Field(default="qdrant", alias="QDRANT_HOST")
     qdrant_port: int = Field(default=6333, alias="QDRANT_PORT")
-    qdrant_collection: str = Field(default="articles", alias="QDRANT_COLLECTION")
+    qdrant_collection: str = Field(default="news_articles", alias="QDRANT_COLLECTION")
 
     enable_scheduler: bool = Field(default=True, alias="ENABLE_SCHEDULER")
     ingestion_interval_minutes: int = Field(default=30, alias="INGESTION_INTERVAL_MINUTES")
+    embedding_index_interval_minutes: int = Field(default=5, alias="EMBEDDING_INDEX_INTERVAL_MINUTES")
+    clustering_interval_minutes: int = Field(default=30, alias="CLUSTERING_INTERVAL_MINUTES")
     enable_news_api: bool = Field(default=False, alias="ENABLE_NEWS_API")
     news_api_url: str = Field(default="https://newsapi.org/v2/everything", alias="NEWS_API_URL")
     news_api_key: str = Field(default="", alias="NEWS_API_KEY")
     news_api_query: str = Field(default="technology OR cybersecurity OR software", alias="NEWS_API_QUERY")
+    embedding_model: str = Field(
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        alias="EMBEDDING_MODEL",
+    )
+    embedding_dimension: int = Field(default=384, alias="EMBEDDING_DIMENSION")
+    embedding_max_chars: int = Field(default=4000, alias="EMBEDDING_MAX_CHARS")
+    embedding_max_retries: int = Field(default=3, alias="EMBEDDING_MAX_RETRIES")
+    clustering_hdbscan_threshold: int = Field(default=50, alias="CLUSTERING_HDBSCAN_THRESHOLD")
+    clustering_min_cluster_size: int = Field(default=5, alias="CLUSTERING_MIN_CLUSTER_SIZE")
+    llm_provider: str = Field(default="groq", alias="LLM_PROVIDER")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model_primary: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL_PRIMARY")
+    groq_model_fallback: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL_FALLBACK")
+    groq_model_fast: str = Field(default="llama-3.1-8b-instant", alias="GROQ_MODEL_FAST")
+    groq_api_url: str = Field(
+        default="https://api.groq.com/openai/v1/chat/completions",
+        alias="GROQ_API_URL",
+    )
+    groq_timeout_seconds: int = Field(default=45, alias="GROQ_TIMEOUT_SECONDS")
+    rag_top_k: int = Field(default=5, alias="RAG_TOP_K")
+    graph_max_entities: int = Field(default=15, alias="GRAPH_MAX_ENTITIES")
+    graph_max_relations: int = Field(default=20, alias="GRAPH_MAX_RELATIONS")
+    rag_max_article_snippet_chars: int = Field(default=700, alias="RAG_MAX_ARTICLE_SNIPPET_CHARS")
+    rag_context_token_budget: int = Field(default=8000, alias="RAG_CONTEXT_TOKEN_BUDGET")
 
     default_language: str = Field(default="en", alias="DEFAULT_LANGUAGE")
     supported_languages: str = Field(default="ru,en", alias="SUPPORTED_LANGUAGES")

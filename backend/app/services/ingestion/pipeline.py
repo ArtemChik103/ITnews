@@ -42,6 +42,8 @@ class IngestionPipeline:
                     url=raw.url,
                     published_at=raw.published_at,
                     language=detect_language(content_clean or raw.title),
+                    embedding_status="pending",
+                    embedding_attempts=0,
                 )
                 self.session.add(article)
                 saved += 1

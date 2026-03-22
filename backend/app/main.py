@@ -6,9 +6,14 @@ from fastapi import FastAPI
 from app.api.routes import router
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.schema import ensure_article_schema
 from app.db.session import SessionLocal, engine
 from app.models import Article  # noqa: F401
+from app.services.clustering.service import ClusteringService
+from app.services.indexing import pipeline as indexing_pipeline
+from app.services.indexing.pipeline import IndexingPipeline
 from app.services.ingestion.pipeline import IngestionPipeline
+from app.services.vector_store.service import VectorStoreService
 
 settings = get_settings()
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -19,13 +24,33 @@ async def run_scheduled_ingestion() -> None:
         await IngestionPipeline(session).run()
 
 
+async def run_scheduled_indexing() -> None:
+    async with SessionLocal() as session:
+        result = await IndexingPipeline(session).run()
+        if result["trigger_recluster"]:
+            await ClusteringService(session).recluster()
+            indexing_pipeline.indexed_since_recluster = 0
+
+
+async def run_scheduled_clustering() -> None:
+    async with SessionLocal() as session:
+        await ClusteringService(session).recluster()
+        indexing_pipeline.indexed_since_recluster = 0
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+    await ensure_article_schema(engine)
+    vector_store = VectorStoreService()
+    await vector_store.ensure_collection()
+    await vector_store.close()
 
     if settings.enable_scheduler and not scheduler.running:
         scheduler.add_job(run_scheduled_ingestion, "interval", minutes=settings.ingestion_interval_minutes)
+        scheduler.add_job(run_scheduled_indexing, "interval", minutes=settings.embedding_index_interval_minutes)
+        scheduler.add_job(run_scheduled_clustering, "interval", minutes=settings.clustering_interval_minutes)
         scheduler.start()
 
     yield
