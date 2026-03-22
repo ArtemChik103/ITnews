@@ -1,88 +1,193 @@
 # IT News Platform
 
-Каркас платформы для сбора IT-новостей, очистки текста, извлечения сущностей и загрузки графа знаний.
+Платформа для сбора, анализа и визуализации IT-новостей с графом знаний, семантическим поиском и RAG-ответами.
+
+## Архитектура
+
+```
+┌─────────────┐     ┌─────────────┐     ┌──────────────┐
+│  Frontend   │────▶│   Backend   │────▶│  PostgreSQL   │
+│  React+Vite │     │   FastAPI   │     │  (статьи)     │
+│  port 3000  │     │  port 8000  │     └──────────────┘
+└─────────────┘     │             │────▶┌──────────────┐
+                    │             │     │   Neo4j      │
+                    │             │     │  (граф)      │
+                    │             │     └──────────────┘
+                    │             │────▶┌──────────────┐
+                    │             │     │   Qdrant     │
+                    │             │     │  (vectors)   │
+                    │             │     └──────────────┘
+                    │             │────▶┌──────────────┐
+                    │             │     │   Redis      │
+                    └─────────────┘     └──────────────┘
+```
 
 ## Реализовано
 
-- Инфраструктура: FastAPI, PostgreSQL, Neo4j, Redis, Qdrant, Docker Compose, healthcheck.
-- Ingestion: RSS для 3 источников, опциональный NewsAPI, очистка HTML, нормализация текста, language detection, дедупликация по URL.
-- NLP/Graph: baseline rule-based NER и relation extraction, загрузка `Article` и `Entity`-графа в Neo4j.
-- Embeddings/Vector: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, Qdrant collection `news_articles`, batch indexing и semantic search.
-- Clustering: `HDBSCAN` с fallback на `KMeans`, cluster summary endpoint, синхронизация `cluster_id` между PostgreSQL и Qdrant.
-- RAG: retrieval из Qdrant и Neo4j, Groq gateway с fallback по 3 моделям и retrieval-only degradation.
+### Backend (фазы 1-5)
+- **Ingestion**: RSS (TechCrunch, Wired, Ars Technica) + NewsAPI, очистка HTML, нормализация, language detection, дедупликация
+- **NLP/Graph**: rule-based NER, relation extraction, граф сущностей в Neo4j
+- **Embeddings**: `paraphrase-multilingual-MiniLM-L12-v2`, Qdrant vector store
+- **Clustering**: HDBSCAN с fallback на KMeans
+- **RAG**: Groq LLM с 3-model fallback chain + retrieval-only degradation
 
-## Структура
-
-```text
-backend/
-frontend/
-docker/
-docs/
-```
+### Frontend (фаза 6)
+- **Dashboard**: граф сущностей, список статей, кластеры
+- **RAG Chat**: чат-интерфейс для вопросов по новостям
+- **Граф**: интерактивная визуализация сущностей (Cytoscape.js)
+- **Фильтры**: по дате, источнику, языку, кластеру
+- **Детальные страницы**: статья, сущность, кластер
+- **Responsive**: адаптивный layout для desktop и mobile
 
 ## Быстрый старт
 
-1. Скопировать `.env.example` в `.env`.
-2. Изменить секреты при необходимости.
-3. Выполнить `docker compose up --build`.
-4. Открыть `http://localhost:8000/health`.
+### Требования
+- Docker и Docker Compose
+- 4 GB+ RAM (для embedding модели)
 
-## API
+### Запуск
 
-- `GET /health`
-- `POST /ingestion/run`
-- `POST /indexing/run`
-- `POST /clustering/run`
-- `GET /articles`
-- `POST /articles/{article_id}/graph`
-- `GET /api/search/semantic`
-- `GET /api/clusters`
-- `POST /api/search`
+```bash
+# 1. Клонировать репозиторий
+git clone https://github.com/ArtemChik103/ITnews.git
+cd ITnews
 
-## Модель Article
+# 2. Настроить переменные окружения
+cp .env.example .env
+# Отредактировать .env: добавить GROQ_API_KEY (обязательно), NEWS_API_KEY (опционально)
 
-- `id`
-- `title`
-- `content_raw`
-- `content_clean`
-- `content_normalized`
-- `source`
-- `url`
-- `published_at`
-- `language`
-- `embedding_status`
-- `embedding_model`
-- `embedded_at`
-- `cluster_id`
-- `clustered_at`
-- `embedding_error`
-- `ingested_at`
+# 3. Запустить все сервисы
+docker compose up --build
 
-## Источники по умолчанию
+# 4. Открыть UI
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:8000/health
+```
 
-- TechCrunch RSS
-- Wired RSS
-- Ars Technica RSS
+### Загрузка тестовых данных
 
-## Схема графа
+После запуска всех сервисов:
 
-Узлы:
+```bash
+# Запустить ingestion (сбор новостей)
+curl -X POST http://localhost:8000/ingestion/run
 
-- `Article`
-- `Entity`
-- `Person`
-- `Organization`
-- `Location`
+# Запустить indexing (генерация embeddings)
+curl -X POST http://localhost:8000/indexing/run
 
-Связи:
+# Запустить clustering
+curl -X POST http://localhost:8000/clustering/run
 
-- `(:Article)-[:MENTIONS]->(:Entity)`
-- `(:Entity)-[:RELATED_TO {type: "..."}]->(:Entity)`
+# Обработать граф для первых статей
+curl -X POST http://localhost:8000/articles/1/graph
+curl -X POST http://localhost:8000/articles/2/graph
+curl -X POST http://localhost:8000/articles/3/graph
+```
+
+Планировщик автоматически выполняет ingestion (каждые 30 мин), indexing (каждые 5 мин) и clustering (каждые 30 мин).
+
+## Переменные окружения
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `GROQ_API_KEY` | — | **Обязательно.** API ключ для Groq LLM |
+| `NEWS_API_KEY` | — | API ключ для NewsAPI (опционально) |
+| `ENABLE_NEWS_API` | `false` | Включить сбор через NewsAPI |
+| `BACKEND_PORT` | `8000` | Порт backend API |
+| `FRONTEND_PORT` | `3000` | Порт frontend UI |
+| `POSTGRES_PASSWORD` | `itnews` | Пароль PostgreSQL |
+| `NEO4J_PASSWORD` | `please-change-me` | Пароль Neo4j |
+
+Полный список переменных — в `.env.example`.
+
+## API Endpoints
+
+### Публичные (используются frontend)
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/api/articles` | Список статей с пагинацией и фильтрами |
+| `GET` | `/api/articles/{id}` | Детали статьи с сущностями |
+| `GET` | `/api/graph` | Граф сущностей (по статье/сущности/запросу) |
+| `GET` | `/api/entities/{name}` | Детали сущности |
+| `GET` | `/api/clusters` | Список кластеров |
+| `POST` | `/api/search` | RAG поиск (вопрос → ответ + источники) |
+| `GET` | `/api/search/semantic` | Семантический поиск по статьям |
+
+### Служебные
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `GET` | `/health` | Healthcheck всех сервисов |
+| `POST` | `/ingestion/run` | Запуск сбора новостей |
+| `POST` | `/indexing/run` | Генерация embeddings |
+| `POST` | `/clustering/run` | Перекластеризация |
+| `POST` | `/articles/{id}/graph` | NER + граф для статьи |
+
+## Структура проекта
+
+```
+├── frontend/           # React + TypeScript + Vite
+│   └── src/
+│       ├── api/        # Axios API client
+│       ├── components/ # UI компоненты
+│       ├── pages/      # Страницы (Dashboard, Article, Entity, Cluster)
+│       ├── store/      # Zustand state management
+│       └── types/      # TypeScript типы
+├── backend/            # FastAPI + Python
+│   └── app/
+│       ├── api/        # Маршруты
+│       ├── models/     # SQLAlchemy модели
+│       ├── schemas/    # Pydantic схемы
+│       └── services/   # Бизнес-логика
+├── docker/             # Dockerfiles и nginx конфиг
+├── docs/               # Документация фаз
+└── docker-compose.yml  # Оркестрация всех сервисов
+```
+
+## Demo Runbook
+
+### Сценарий 1: Семантический поиск
+1. Открыть http://localhost:3000
+2. В чате ввести: «Какие компании работают с искусственным интеллектом?»
+3. Посмотреть ответ, источники и граф
+
+### Сценарий 2: Навигация по графу
+1. На dashboard кликнуть по узлу в графе
+2. Посмотреть связанные сущности и статьи
+3. Перейти к детальной странице статьи
+
+### Сценарий 3: Фильтрация
+1. Выбрать источник в фильтрах
+2. Установить диапазон дат
+3. Убедиться, что список статей обновился
+
+### Восстановление при сбое
+- Если LLM не отвечает: система автоматически переключается на fallback модель или retrieval-only режим
+- Если граф пуст: выполнить `POST /articles/{id}/graph` для нужных статей
+- Если нет статей: выполнить `POST /ingestion/run`
+
+## Облачный деплой (опционально)
+
+Документация для альтернативного облачного развёртывания:
+
+| Компонент | Сервис |
+|---|---|
+| Frontend | Vercel (из `frontend/`) |
+| Backend | Render или Railway |
+| PostgreSQL | Supabase или managed Postgres |
+| Neo4j | Neo4j Aura |
+| Qdrant | Qdrant Cloud |
+
+Для облачного деплоя: установить `VITE_API_URL` в переменных окружения frontend на URL backend.
 
 ## Известные ограничения
 
-- NER и relation extraction реализованы эвристиками и дают только baseline-качество.
-- Планировщик встроен в backend через APScheduler; при росте нагрузки его стоит вынести в отдельный worker.
-- Миграции схемы БД пока заменены startup-изменениями через `ALTER TABLE ... IF NOT EXISTS`.
-- `sentence-transformers` и `torch` делают backend-образ заметно тяжелее.
-- RAG ответ зависит от доступности Groq; при ошибках генерации endpoint уходит в retrieval-only режим.
+- NER и relation extraction — rule-based, baseline-качество
+- Clustering может быть нестабилен на маленьком датасете (< 50 статей)
+- Качество RAG ответов зависит от качества ingestion и graph extraction
+- Groq free-tier лимиты могут вызывать деградацию (rate limiting)
+- Embedding модель загружается в RAM (~500 MB), что увеличивает время старта
+- Миграции БД через `ALTER TABLE IF NOT EXISTS` (не Alembic)
+- Планировщик встроен в backend; при масштабировании нужен отдельный worker
+- Макс. 50 узлов и 80 связей в одном graph payload

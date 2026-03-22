@@ -200,3 +200,117 @@ class Neo4jGraphService:
                 )
 
         return {"entities": len(entities), "relations": len(relations)}
+
+    async def get_entity_detail(self, entity_name: str) -> dict | None:
+        async with self.driver.session() as session:
+            entity_result = await session.run(
+                """
+                MATCH (e:Entity)
+                WHERE toLower(e.name) = toLower($name) OR toLower(e.normalized_name) = toLower($name)
+                RETURN e.name AS name, e.entity_type AS type
+                LIMIT 1
+                """,
+                name=entity_name,
+            )
+            entity_data = await entity_result.data()
+            if not entity_data:
+                return None
+            entity = entity_data[0]
+
+            articles_result = await session.run(
+                """
+                MATCH (a:Article)-[:MENTIONS]->(e:Entity)
+                WHERE toLower(e.name) = toLower($name) OR toLower(e.normalized_name) = toLower($name)
+                RETURN a.article_id AS article_id, a.title AS title, a.source AS source,
+                       a.url AS url, a.published_at AS published_at
+                ORDER BY a.published_at DESC
+                LIMIT 50
+                """,
+                name=entity_name,
+            )
+            articles = await articles_result.data()
+
+            related_result = await session.run(
+                """
+                MATCH (e:Entity)-[:RELATED_TO]-(other:Entity)
+                WHERE (toLower(e.name) = toLower($name) OR toLower(e.normalized_name) = toLower($name))
+                  AND e <> other
+                RETURN DISTINCT other.name AS name, other.entity_type AS type
+                ORDER BY name
+                LIMIT 30
+                """,
+                name=entity_name,
+            )
+            related = await related_result.data()
+
+        return {
+            "name": entity["name"],
+            "type": entity["type"],
+            "articles": articles,
+            "related_entities": [{"name": r["name"], "type": r["type"]} for r in related],
+        }
+
+    async def get_graph_for_entity(self, entity_name: str, max_nodes: int = 50, max_edges: int = 80) -> dict:
+        async with self.driver.session() as session:
+            nodes_result = await session.run(
+                """
+                MATCH (center:Entity)
+                WHERE toLower(center.name) = toLower($name) OR toLower(center.normalized_name) = toLower($name)
+                OPTIONAL MATCH (center)-[:RELATED_TO]-(neighbor:Entity)
+                WITH collect(DISTINCT center) + collect(DISTINCT neighbor) AS all_entities
+                UNWIND all_entities AS e
+                WITH DISTINCT e
+                LIMIT $max_nodes
+                RETURN e.name AS name, e.entity_type AS type, e.normalized_name AS id
+                """,
+                name=entity_name,
+                max_nodes=max_nodes,
+            )
+            nodes = await nodes_result.data()
+
+            node_ids = [n["id"] for n in nodes]
+
+            edges_result = await session.run(
+                """
+                MATCH (s:Entity)-[r:RELATED_TO]->(t:Entity)
+                WHERE s.normalized_name IN $node_ids AND t.normalized_name IN $node_ids
+                RETURN s.name AS from_name, r.type AS relation, t.name AS to_name,
+                       coalesce(r.article_ids, []) AS source_article_ids
+                LIMIT $max_edges
+                """,
+                node_ids=node_ids,
+                max_edges=max_edges,
+            )
+            edges = await edges_result.data()
+
+        return {"nodes": nodes, "edges": edges}
+
+    async def get_graph_for_article(self, article_id: int, max_nodes: int = 50, max_edges: int = 80) -> dict:
+        async with self.driver.session() as session:
+            nodes_result = await session.run(
+                """
+                MATCH (a:Article {article_id: $article_id})-[:MENTIONS]->(e:Entity)
+                RETURN DISTINCT e.name AS name, e.entity_type AS type, e.normalized_name AS id
+                LIMIT $max_nodes
+                """,
+                article_id=article_id,
+                max_nodes=max_nodes,
+            )
+            nodes = await nodes_result.data()
+
+            node_ids = [n["id"] for n in nodes]
+
+            edges_result = await session.run(
+                """
+                MATCH (s:Entity)-[r:RELATED_TO]->(t:Entity)
+                WHERE s.normalized_name IN $node_ids AND t.normalized_name IN $node_ids
+                RETURN s.name AS from_name, r.type AS relation, t.name AS to_name,
+                       coalesce(r.article_ids, []) AS source_article_ids
+                LIMIT $max_edges
+                """,
+                node_ids=node_ids,
+                max_edges=max_edges,
+            )
+            edges = await edges_result.data()
+
+        return {"nodes": nodes, "edges": edges}

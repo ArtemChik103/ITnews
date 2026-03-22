@@ -76,3 +76,30 @@ class SearchResponse(BaseModel):
     retrieval_debug: RetrievalDebug
     confidence: float
     status: str
+
+
+class GraphNode(BaseModel):
+    id: str
+    label: str
+    type: str
+    metadata: dict = {}
+
+
+class GraphResponse(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+
+class EntityArticle(BaseModel):
+    article_id: int
+    title: str
+    source: str
+    url: str
+    published_at: datetime | None
+
+
+class EntityDetailResponse(BaseModel):
+    name: str
+    type: str
+    articles: list[EntityArticle]
+    related_entities: list[SearchEntity]
