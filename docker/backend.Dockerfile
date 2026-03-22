@@ -2,15 +2,15 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip install --upgrade pip
 
-COPY backend/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY backend/requirements-runtime.txt /tmp/requirements-runtime.txt
+RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.10.0+cpu \
+    && pip install -r /tmp/requirements-runtime.txt
 
 COPY backend /app/backend
 
