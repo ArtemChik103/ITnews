@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,8 @@ from app.core.config import get_settings
 from app.schemas.search import SearchResponse
 from app.services.llm.groq_gateway import GroqGateway
 from app.services.retrieval.service import RetrievalResult, RetrievalService
+
+LLM_BUDGET_SECONDS = 30
 
 
 class RagService:
@@ -44,7 +47,10 @@ class RagService:
 
         messages = build_rag_messages(question=question, retrieval=retrieval)
         try:
-            llm_result = await self.llm_gateway.complete(messages=messages)
+            llm_result = await asyncio.wait_for(
+                self.llm_gateway.complete(messages=messages),
+                timeout=LLM_BUDGET_SECONDS,
+            )
             parsed = parse_llm_output(llm_result["text"])
             answer = parsed["answer"]
             confidence = parsed["confidence"]

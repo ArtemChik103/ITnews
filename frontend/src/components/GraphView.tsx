@@ -1,11 +1,12 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react';
 import cytoscape from 'cytoscape';
-import { Box, Typography, Chip, Alert } from '@mui/material';
+import { Box, Typography, Chip, Alert, CircularProgress } from '@mui/material';
 import type { GraphNode, GraphEdge } from '../types';
 
 interface Props {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  loading?: boolean;
   onNodeClick?: (nodeId: string, label: string) => void;
   onEdgeClick?: (edge: GraphEdge) => void;
   selectedNode?: string | null;
@@ -21,7 +22,7 @@ const TYPE_COLORS: Record<string, string> = {
   Entity: '#a78bfa',
 };
 
-export default function GraphView({ nodes, edges, onNodeClick, selectedNode }: Props) {
+export default function GraphView({ nodes, edges, loading, onNodeClick, selectedNode }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -135,6 +136,17 @@ export default function GraphView({ nodes, edges, onNodeClick, selectedNode }: P
       cyRef.current.animate({ center: { eles: node }, zoom: 1.5, duration: 300 });
     }
   }, [selectedNode]);
+
+  if (loading) {
+    return (
+      <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'text.secondary' }}>
+        <Box sx={{ textAlign: 'center' }}>
+          <CircularProgress size={32} sx={{ mb: 1 }} />
+          <Typography variant="body2">Граф загружается…</Typography>
+        </Box>
+      </Box>
+    );
+  }
 
   if (nodes.length === 0) {
     return (

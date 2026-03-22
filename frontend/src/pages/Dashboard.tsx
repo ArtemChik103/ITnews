@@ -13,6 +13,7 @@ export default function Dashboard() {
   const filters = useFilterStore();
   const searchGraphNodes = useGraphStore((s) => s.nodes);
   const searchGraphEdges = useGraphStore((s) => s.edges);
+  const searchGraphLoading = useGraphStore((s) => s.loading);
 
   const articlesQuery = useQuery({
     queryKey: ['articles', filters.page, filters.pageSize, filters.source, filters.language, filters.clusterId, filters.dateFrom, filters.dateTo, filters.sort],
@@ -44,6 +45,7 @@ export default function Dashboard() {
           <GraphView
             nodes={displayNodes}
             edges={displayEdges}
+            loading={searchGraphLoading}
             onNodeClick={(_, label) => navigate(`/entities/${encodeURIComponent(label)}`)}
           />
         </Box>

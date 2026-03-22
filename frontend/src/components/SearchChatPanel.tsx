@@ -11,7 +11,7 @@ import {
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import type { ChatMessage } from '../types';
-import { searchRAG } from '../api/client';
+import { searchRAG, fetchGraph } from '../api/client';
 import { useGraphStore } from '../store/useGraphStore';
 
 interface Props {
@@ -24,7 +24,7 @@ export default function SearchChatPanel({ onSourceClick }: Props) {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const setGraphFromSearch = useGraphStore((s) => s.setFromSearch);
+  const graphStore = useGraphStore();
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -46,6 +46,12 @@ export default function SearchChatPanel({ onSourceClick }: Props) {
     setInput('');
     setIsLoading(true);
 
+    // Start graph fetch in parallel (non-blocking)
+    graphStore.setLoading(true);
+    fetchGraph({ query: question })
+      .then((g) => graphStore.setFromFetch(g.nodes, g.edges))
+      .catch(() => graphStore.setLoading(false));
+
     try {
       const res = await searchRAG({ question, top_k: 5, use_graph: true });
       const assistantMsg: ChatMessage = {
@@ -61,12 +67,14 @@ export default function SearchChatPanel({ onSourceClick }: Props) {
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
-      setGraphFromSearch(res.graph_edges, res.entities);
-    } catch {
+    } catch (err) {
+      const isTimeout = err instanceof Error && (err.message.includes('timeout') || err.message.includes('ECONNABORTED'));
       const errorMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: 'Ошибка при получении ответа. Попробуйте ещё раз.',
+        content: isTimeout
+          ? 'Превышено время ожидания ответа от LLM. Возможно, Groq API перегружен. Попробуйте через минуту.'
+          : 'Ошибка при получении ответа. Попробуйте ещё раз.',
         status: 'error',
         timestamp: Date.now(),
       };

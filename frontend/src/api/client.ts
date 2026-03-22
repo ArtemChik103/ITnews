@@ -11,7 +11,7 @@ import type {
 } from '../types';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_API_URL || '',
   timeout: 15000,
 });
 
@@ -54,7 +54,7 @@ export async function fetchClusters(): Promise<ClusterSummaryItem[]> {
 }
 
 export async function searchRAG(request: SearchRequest): Promise<SearchResponse> {
-  const { data } = await api.post<SearchResponse>('/api/search', request);
+  const { data } = await api.post<SearchResponse>('/api/search', request, { timeout: 60000 });
   return data;
 }
 

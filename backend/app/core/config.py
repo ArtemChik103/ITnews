@@ -55,7 +55,7 @@ class Settings(BaseSettings):
         default="https://api.groq.com/openai/v1/chat/completions",
         alias="GROQ_API_URL",
     )
-    groq_timeout_seconds: int = Field(default=45, alias="GROQ_TIMEOUT_SECONDS")
+    groq_timeout_seconds: int = Field(default=15, alias="GROQ_TIMEOUT_SECONDS")
     rag_top_k: int = Field(default=5, alias="RAG_TOP_K")
     graph_max_entities: int = Field(default=15, alias="GRAPH_MAX_ENTITIES")
     graph_max_relations: int = Field(default=20, alias="GRAPH_MAX_RELATIONS")
