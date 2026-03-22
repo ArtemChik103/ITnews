@@ -131,8 +131,11 @@ def build_rag_messages(question: str, retrieval: RetrievalResult) -> list[dict]:
 def parse_llm_output(text: str) -> dict:
     try:
         payload = json.loads(text)
+        answer = payload.get("answer") or text
+        if isinstance(answer, list):
+            answer = "\n".join(str(item) for item in answer)
         return {
-            "answer": payload.get("answer") or text,
+            "answer": str(answer),
             "confidence": float(payload.get("confidence", 0.6)),
         }
     except Exception:  # noqa: BLE001

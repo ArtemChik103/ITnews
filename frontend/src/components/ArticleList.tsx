@@ -93,9 +93,9 @@ export default function ArticleList({ articles, total, page, pageSize, onPageCha
                     variant="outlined"
                     onClick={(e) => {
                       e.stopPropagation();
+                      e.preventDefault();
                       navigate(`/clusters/${article.cluster_id}`);
                     }}
-                    component="button"
                   />
                 )}
                 <Chip
