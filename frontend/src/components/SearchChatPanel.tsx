@@ -10,20 +10,21 @@ import {
   Alert,
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
-import type { ChatMessage, SearchResponse } from '../types';
+import type { ChatMessage } from '../types';
 import { searchRAG } from '../api/client';
+import { useGraphStore } from '../store/useGraphStore';
 
 interface Props {
-  onGraphUpdate?: (edges: SearchResponse['graph_edges'], entities: SearchResponse['entities']) => void;
   onSourceClick?: (articleId: number) => void;
 }
 
-export default function SearchChatPanel({ onGraphUpdate, onSourceClick }: Props) {
+export default function SearchChatPanel({ onSourceClick }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const setGraphFromSearch = useGraphStore((s) => s.setFromSearch);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -60,7 +61,7 @@ export default function SearchChatPanel({ onGraphUpdate, onSourceClick }: Props)
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
-      onGraphUpdate?.(res.graph_edges, res.entities);
+      setGraphFromSearch(res.graph_edges, res.entities);
     } catch {
       const errorMsg: ChatMessage = {
         id: crypto.randomUUID(),

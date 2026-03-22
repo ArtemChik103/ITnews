@@ -13,15 +13,10 @@ import MenuIcon from '@mui/icons-material/Menu';
 import HomeIcon from '@mui/icons-material/Home';
 import { useState } from 'react';
 import SearchChatPanel from './SearchChatPanel';
-import type { GraphEdge, SearchEntity } from '../types';
-
-interface Props {
-  onGraphUpdate?: (edges: GraphEdge[], entities: SearchEntity[]) => void;
-}
 
 const DRAWER_WIDTH = 380;
 
-export default function Layout({ onGraphUpdate }: Props) {
+export default function Layout() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -30,7 +25,6 @@ export default function Layout({ onGraphUpdate }: Props) {
   const chatPanel = (
     <Box sx={{ width: isMobile ? '85vw' : DRAWER_WIDTH, height: '100%', display: 'flex', flexDirection: 'column' }}>
       <SearchChatPanel
-        onGraphUpdate={onGraphUpdate}
         onSourceClick={(id) => {
           navigate(`/articles/${id}`);
           if (isMobile) setDrawerOpen(false);

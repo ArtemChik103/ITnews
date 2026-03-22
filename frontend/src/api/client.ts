@@ -58,6 +58,11 @@ export async function searchRAG(request: SearchRequest): Promise<SearchResponse>
   return data;
 }
 
+export async function fetchMeta(): Promise<{ sources: string[]; languages: string[] }> {
+  const { data } = await api.get<{ sources: string[]; languages: string[] }>('/api/meta');
+  return data;
+}
+
 export async function semanticSearch(
   q: string,
   topK = 5,

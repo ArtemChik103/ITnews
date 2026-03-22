@@ -1,5 +1,7 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
@@ -36,6 +38,13 @@ async def run_ingestion(session: AsyncSession = Depends(get_db_session)) -> dict
     return await IngestionPipeline(session).run()
 
 
+@router.get("/api/meta")
+async def get_meta(session: AsyncSession = Depends(get_db_session)) -> dict:
+    sources = (await session.scalars(select(distinct(Article.source)).where(Article.source.isnot(None)).order_by(Article.source))).all()
+    languages = (await session.scalars(select(distinct(Article.language)).where(Article.language.isnot(None)).order_by(Article.language))).all()
+    return {"sources": sources, "languages": languages}
+
+
 @router.get("/api/articles", response_model=ArticleListResponse)
 async def list_articles(
     page: int = Query(default=1, ge=1),
@@ -62,11 +71,21 @@ async def list_articles(
         query = query.where(Article.cluster_id == cluster_id)
         count_query = count_query.where(Article.cluster_id == cluster_id)
     if date_from:
-        query = query.where(Article.published_at >= date_from)
-        count_query = count_query.where(Article.published_at >= date_from)
+        try:
+            dt_from = datetime.fromisoformat(date_from)
+        except ValueError:
+            dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+        query = query.where(Article.published_at >= dt_from)
+        count_query = count_query.where(Article.published_at >= dt_from)
     if date_to:
-        query = query.where(Article.published_at <= date_to)
-        count_query = count_query.where(Article.published_at <= date_to)
+        try:
+            dt_to = datetime.fromisoformat(date_to)
+        except ValueError:
+            dt_to = datetime.strptime(date_to, "%Y-%m-%d")
+        # Include the entire day
+        dt_to = dt_to.replace(hour=23, minute=59, second=59)
+        query = query.where(Article.published_at <= dt_to)
+        count_query = count_query.where(Article.published_at <= dt_to)
 
     total = await session.scalar(count_query) or 0
 

@@ -1,4 +1,3 @@
-import { useState, useCallback } from 'react';
 import { Box, Typography, Card, CardContent, CardActionArea, Chip, Skeleton } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
@@ -7,13 +6,13 @@ import ArticleList from '../components/ArticleList';
 import FilterPanel from '../components/FilterPanel';
 import { fetchArticles, fetchClusters, fetchGraph } from '../api/client';
 import { useFilterStore } from '../store/useFilterStore';
-import type { GraphEdge, GraphNode, SearchEntity } from '../types';
+import { useGraphStore } from '../store/useGraphStore';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const filters = useFilterStore();
-  const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
-  const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
+  const searchGraphNodes = useGraphStore((s) => s.nodes);
+  const searchGraphEdges = useGraphStore((s) => s.edges);
 
   const articlesQuery = useQuery({
     queryKey: ['articles', filters.page, filters.pageSize, filters.source, filters.language, filters.clusterId, filters.dateFrom, filters.dateTo, filters.sort],
@@ -32,25 +31,8 @@ export default function Dashboard() {
     staleTime: 60000,
   });
 
-  const handleGraphUpdate = useCallback(
-    (edges: GraphEdge[], entities: SearchEntity[]) => {
-      const nodes: GraphNode[] = entities.map((e) => ({
-        id: e.name.toLowerCase().replace(/\s+/g, '_'),
-        label: e.name,
-        type: e.type,
-        metadata: {},
-      }));
-      setGraphNodes(nodes);
-      setGraphEdges(edges);
-    },
-    [],
-  );
-
-  const displayNodes = graphNodes.length > 0 ? graphNodes : (graphQuery.data?.nodes ?? []);
-  const displayEdges = graphEdges.length > 0 ? graphEdges : (graphQuery.data?.edges ?? []);
-
-  // Expose for Layout
-  (window as unknown as Record<string, unknown>).__dashboardGraphUpdate = handleGraphUpdate;
+  const displayNodes = searchGraphNodes.length > 0 ? searchGraphNodes : (graphQuery.data?.nodes ?? []);
+  const displayEdges = searchGraphEdges.length > 0 ? searchGraphEdges : (graphQuery.data?.edges ?? []);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>

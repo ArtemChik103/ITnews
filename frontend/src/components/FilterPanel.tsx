@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   Box,
   TextField,
@@ -11,12 +12,7 @@ import {
 import FilterListIcon from '@mui/icons-material/FilterList';
 import ClearIcon from '@mui/icons-material/Clear';
 import { useFilterStore } from '../store/useFilterStore';
-
-const SOURCES = ['TechCrunch', 'Wired', 'Ars Technica', 'NewsAPI'];
-const LANGUAGES = [
-  { value: 'en', label: 'English' },
-  { value: 'ru', label: 'Русский' },
-];
+import { fetchMeta } from '../api/client';
 
 export default function FilterPanel() {
   const {
@@ -24,13 +20,23 @@ export default function FilterPanel() {
     setFilter, resetFilters,
   } = useFilterStore();
 
+  const [sources, setSources] = useState<string[]>([]);
+  const [languages, setLanguages] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetchMeta().then((meta) => {
+      setSources(meta.sources);
+      setLanguages(meta.languages);
+    }).catch(() => {});
+  }, []);
+
   const hasActiveFilters = source || language || dateFrom || dateTo;
 
   return (
     <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center', p: 1.5 }}>
       <FilterListIcon sx={{ color: 'text.secondary' }} />
 
-      <FormControl size="small" sx={{ minWidth: 130 }}>
+      <FormControl size="small" sx={{ minWidth: 160 }}>
         <InputLabel id="source-filter-label">Источник</InputLabel>
         <Select
           labelId="source-filter-label"
@@ -39,7 +45,7 @@ export default function FilterPanel() {
           onChange={(e: SelectChangeEvent) => setFilter('source', e.target.value)}
         >
           <MenuItem value="">Все</MenuItem>
-          {SOURCES.map((s) => (
+          {sources.map((s) => (
             <MenuItem key={s} value={s}>{s}</MenuItem>
           ))}
         </Select>
@@ -54,8 +60,8 @@ export default function FilterPanel() {
           onChange={(e: SelectChangeEvent) => setFilter('language', e.target.value)}
         >
           <MenuItem value="">Все</MenuItem>
-          {LANGUAGES.map((l) => (
-            <MenuItem key={l.value} value={l.value}>{l.label}</MenuItem>
+          {languages.map((l) => (
+            <MenuItem key={l} value={l}>{l}</MenuItem>
           ))}
         </Select>
       </FormControl>

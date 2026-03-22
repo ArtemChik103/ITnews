@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import FilterPanel from '../components/FilterPanel';
 import { useFilterStore } from '../store/useFilterStore';
+
+vi.mock('../api/client', () => ({
+  fetchMeta: vi.fn().mockResolvedValue({ sources: ['techcrunch.com', 'www.wired.com'], languages: ['en'] }),
+}));
 
 describe('FilterPanel', () => {
   it('renders all filter controls', () => {
@@ -14,7 +18,6 @@ describe('FilterPanel', () => {
   });
 
   it('does not show reset button when no filters active', () => {
-    // Reset store first
     useFilterStore.getState().resetFilters();
     render(<FilterPanel />);
     expect(screen.queryByText('Сбросить')).not.toBeInTheDocument();
