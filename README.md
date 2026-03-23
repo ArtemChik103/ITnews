@@ -4,22 +4,13 @@
 
 ## Архитектура
 
-```
-┌─────────────┐     ┌─────────────┐     ┌──────────────┐
-│  Frontend   │────▶│   Backend   │────▶│  PostgreSQL   │
-│  React+Vite │     │   FastAPI   │     │  (статьи)     │
-│  port 3000  │     │  port 8000  │     └──────────────┘
-└─────────────┘     │             │────▶┌──────────────┐
-                    │             │     │   Neo4j      │
-                    │             │     │  (граф)      │
-                    │             │     └──────────────┘
-                    │             │────▶┌──────────────┐
-                    │             │     │   Qdrant     │
-                    │             │     │  (vectors)   │
-                    │             │     └──────────────┘
-                    │             │────▶┌──────────────┐
-                    │             │     │   Redis      │
-                    └─────────────┘     └──────────────┘
+```mermaid
+flowchart LR
+    FE["Frontend<br/>React + Vite<br/>port 3000"] --> BE["Backend<br/>FastAPI<br/>port 8000"]
+    BE --> PG["PostgreSQL<br/>(статьи)"]
+    BE --> NEO["Neo4j<br/>(граф)"]
+    BE --> QD["Qdrant<br/>(vectors)"]
+    BE --> REDIS["Redis"]
 ```
 
 ## Реализовано
