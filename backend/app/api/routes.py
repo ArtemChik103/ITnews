@@ -184,7 +184,8 @@ async def get_graph(
             else:
                 data = {"nodes": [], "edges": []}
         else:
-            data = {"nodes": [], "edges": []}
+            # Default: show top connected entities
+            data = await graph_service.get_default_graph()
     finally:
         await graph_service.close()
 

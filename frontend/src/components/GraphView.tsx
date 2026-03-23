@@ -22,6 +22,14 @@ const TYPE_COLORS: Record<string, string> = {
   Entity: '#a78bfa',
 };
 
+const RELATION_LABELS: Record<string, string> = {
+  ASSOCIATED_WITH: 'связан',
+  LEADS: 'руководит',
+  WORKS_AT: 'работает',
+  HIRED_BY: 'нанят',
+  LOCATED_IN: 'находится',
+};
+
 export default function GraphView({ nodes, edges, loading, onNodeClick, selectedNode }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
@@ -51,7 +59,7 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
           id: `edge-${i}`,
           source: e.from.toLowerCase().replace(/\s+/g, '_'),
           target: e.to.toLowerCase().replace(/\s+/g, '_'),
-          label: e.relation,
+          label: RELATION_LABELS[e.relation] || e.relation,
         },
       }));
 
@@ -116,8 +124,12 @@ export default function GraphView({ nodes, edges, loading, onNodeClick, selected
             'target-arrow-color': 'rgba(148,163,184,0.5)',
             'target-arrow-shape': 'triangle',
             'curve-style': 'bezier',
-            // Edge labels hidden by default — too cluttered
-            'font-size': '0px',
+            label: 'data(label)',
+            'font-size': '9px',
+            color: '#94a3b8',
+            'text-rotation': 'autorotate',
+            'text-outline-color': '#0f172a',
+            'text-outline-width': 2,
           },
         },
         {

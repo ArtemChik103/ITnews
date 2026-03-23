@@ -62,6 +62,44 @@ class Neo4jGraphService:
             rows = await result.data()
         return [row["name"] for row in rows]
 
+    async def get_default_graph(self, max_nodes: int = 30, max_edges: int = 50) -> dict:
+        async with self.driver.session() as session:
+            edge_result = await session.run(
+                """
+                MATCH (source:Entity)-[r:RELATED_TO]->(target:Entity)
+                WHERE size(coalesce(r.article_ids, [])) > 0
+                RETURN source.name AS from_name, source.entity_type AS from_type,
+                       r.type AS relation,
+                       target.name AS to_name, target.entity_type AS to_type,
+                       coalesce(r.article_ids, []) AS source_article_ids,
+                       size(coalesce(r.article_ids, [])) AS weight
+                ORDER BY weight DESC
+                LIMIT $max_edges
+                """,
+                max_edges=max_edges,
+            )
+            edges_raw = await edge_result.data()
+
+            nodes_map: dict[str, dict] = {}
+            for e in edges_raw:
+                for name, etype in [(e["from_name"], e["from_type"]), (e["to_name"], e["to_type"])]:
+                    nid = name.lower().replace(" ", "_")
+                    if nid not in nodes_map:
+                        nodes_map[nid] = {"name": name, "type": etype or "Entity", "id": nid}
+
+            return {
+                "nodes": list(nodes_map.values())[:max_nodes],
+                "edges": [
+                    {
+                        "from_name": e["from_name"],
+                        "relation": e["relation"],
+                        "to_name": e["to_name"],
+                        "source_article_ids": [a for a in e["source_article_ids"] if a is not None],
+                    }
+                    for e in edges_raw
+                ],
+            }
+
     async def get_context(self, article_ids: list[int], max_entities: int, max_relations: int) -> dict:
         async with self.driver.session() as session:
             entity_result = await session.run(

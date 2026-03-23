@@ -14,6 +14,10 @@ backend/data/
 generate_presentation.py
 repository_code_dump.txt
 demo_questions.txt
+plan.md
+presentation_notes.md
+project_explanation.md
+frontend/README.md
 frontend/test-results/
 frontend/src/assets/hero.png
 frontend/src/assets/react.svg

@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 import {
   Box,
   TextField,
@@ -37,7 +39,7 @@ export default function SearchChatPanel({ onSourceClick }: Props) {
     if (!question || isLoading) return;
 
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: uid(),
       role: 'user',
       content: question,
       timestamp: Date.now(),
@@ -55,7 +57,7 @@ export default function SearchChatPanel({ onSourceClick }: Props) {
     try {
       const res = await searchRAG({ question, top_k: 5, use_graph: true });
       const assistantMsg: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: uid(),
         role: 'assistant',
         content: res.answer,
         sources: res.sources,
@@ -70,7 +72,7 @@ export default function SearchChatPanel({ onSourceClick }: Props) {
     } catch (err) {
       const isTimeout = err instanceof Error && (err.message.includes('timeout') || err.message.includes('ECONNABORTED'));
       const errorMsg: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: uid(),
         role: 'assistant',
         content: isTimeout
           ? 'Превышено время ожидания ответа от LLM. Возможно, Groq API перегружен. Попробуйте через минуту.'

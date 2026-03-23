@@ -184,18 +184,18 @@ def extract_relations(article: Article, entities: list[ExtractedEntity]) -> list
     by_normalized = {entity.normalized_name: entity for entity in entities}
     sentences = split_sentences(text)
 
-    works_patterns = [
-        re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})\s+(?:works at|joined|leads|heads)\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"),
-        re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2}),?\s+(?:CEO|CTO|founder|president)\s+of\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"),
-        re.compile(r"(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})\s+(?:CEO|CTO|founder|president)\s+(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})"),
-        re.compile(r"(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})\s+(?:hired|appointed|named)\s+(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})"),
-        re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})\s+(?:at|from)\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"),
+    works_patterns: list[tuple[re.Pattern[str], str]] = [
+        (re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})\s+(?:works at|joined|leads|heads)\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"), "WORKS_AT"),
+        (re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2}),?\s+(?:CEO|CTO|founder|president|co-founder)\s+of\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"), "LEADS"),
+        (re.compile(r"(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})\s+(?:CEO|CTO|founder|president|co-founder)\s+(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})"), "LEADS"),
+        (re.compile(r"(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})\s+(?:hired|appointed|named)\s+(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})"), "HIRED_BY"),
+        (re.compile(r"(?P<person>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})\s+(?:at|from)\s+(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})"), "ASSOCIATED_WITH"),
     ]
     location_patterns = [
         re.compile(r"(?P<org>[A-ZА-Я][\w&.'-]+(?:\s+[A-ZА-Я][\w&.'-]+){0,3})\s+(?:is based in|headquartered in|located in|opens in|expands to)\s+(?P<loc>[A-ZА-Я][\w'-]+(?:\s+[A-ZА-Я][\w'-]+){0,2})")
     ]
 
-    for pattern in works_patterns:
+    for pattern, rel_type in works_patterns:
         for match in pattern.finditer(text):
             person = by_normalized.get(normalize_entity_name(match.group("person")))
             org = by_normalized.get(normalize_entity_name(match.group("org")))
@@ -204,7 +204,7 @@ def extract_relations(article: Article, entities: list[ExtractedEntity]) -> list
                     ExtractedRelation(
                         source_name=person.name,
                         source_type=person.entity_type,
-                        relation_type="ASSOCIATED_WITH",
+                        relation_type=rel_type,
                         target_name=org.name,
                         target_type=org.entity_type,
                     )
@@ -385,7 +385,7 @@ def sanitize_entity_candidate(value: str) -> str:
 def is_valid_relation(relation: ExtractedRelation) -> bool:
     if relation.relation_type == "LOCATED_IN":
         return relation.source_type == "ORGANIZATION" and relation.target_type == "LOCATION"
-    if relation.relation_type == "ASSOCIATED_WITH":
+    if relation.relation_type in ("ASSOCIATED_WITH", "WORKS_AT", "LEADS", "HIRED_BY"):
         return (
             relation.source_type == "PERSON"
             and relation.target_type == "ORGANIZATION"
