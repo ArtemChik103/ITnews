@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     news_api_key: str = Field(default="", alias="NEWS_API_KEY")
     news_api_query: str = Field(default="technology OR cybersecurity OR software", alias="NEWS_API_QUERY")
     embedding_model: str = Field(
-        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        default="sentence-transformers/all-MiniLM-L6-v2",
         alias="EMBEDDING_MODEL",
     )
     embedding_dimension: int = Field(default=384, alias="EMBEDDING_DIMENSION")
