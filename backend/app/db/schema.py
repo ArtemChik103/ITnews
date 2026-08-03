@@ -11,6 +11,7 @@ async def ensure_article_schema(engine: AsyncEngine) -> None:
         "ALTER TABLE articles ADD COLUMN IF NOT EXISTS clustered_at TIMESTAMPTZ",
         "ALTER TABLE articles ADD COLUMN IF NOT EXISTS embedding_error TEXT",
         "ALTER TABLE articles ADD COLUMN IF NOT EXISTS embedding_attempts INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE articles ADD COLUMN IF NOT EXISTS embedding_data TEXT",
         "UPDATE articles SET embedding_status = 'pending' WHERE embedding_status IS NULL",
         "UPDATE articles SET embedding_attempts = 0 WHERE embedding_attempts IS NULL",
     ]

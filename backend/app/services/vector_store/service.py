@@ -1,149 +1,151 @@
-import asyncio
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
 from datetime import datetime
+import numpy as np
+from sqlalchemy import select
+from app.db.session import SessionLocal
+from app.models.article import Article
 
-import httpx
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
 
-from app.core.config import get_settings
+@dataclass(slots=True)
+class ScoredPoint:
+    id: int
+    score: float
+    payload: dict
+
+
+@dataclass(slots=True)
+class Record:
+    id: int
+    payload: dict
+    vector: list[float]
 
 
 class VectorStoreService:
-    def __init__(self) -> None:
-        self.settings = get_settings()
-        self.client = QdrantClient(host=self.settings.qdrant_host, port=self.settings.qdrant_port)
+    """PostgreSQL + NumPy backed vector store replacing Qdrant."""
 
     async def close(self) -> None:
-        await asyncio.to_thread(self.client.close)
+        pass
 
     async def ensure_collection(self) -> None:
-        await asyncio.to_thread(self._ensure_collection_sync)
-
-    def _ensure_collection_sync(self) -> None:
-        collections = self.client.get_collections().collections
-        if any(collection.name == self.settings.qdrant_collection for collection in collections):
-            return
-        self.client.create_collection(
-            collection_name=self.settings.qdrant_collection,
-            vectors_config=models.VectorParams(
-                size=self.settings.embedding_dimension,
-                distance=models.Distance.COSINE,
-            ),
-        )
+        pass
 
     async def upsert_article_embedding(self, article_id: int, embedding: list[float], payload: dict) -> None:
-        await self.ensure_collection()
-        await asyncio.to_thread(
-            self.client.upsert,
-            collection_name=self.settings.qdrant_collection,
-            points=[
-                models.PointStruct(
-                    id=article_id,
-                    vector=embedding,
-                    payload=payload,
-                )
-            ],
-            wait=True,
-        )
+        async with SessionLocal() as session:
+            article = await session.get(Article, article_id)
+            if article:
+                article.embedding_data = json.dumps(embedding)
+                await session.commit()
 
     async def search(
         self,
         query_embedding: list[float],
         top_k: int,
         filters: dict | None = None,
-    ) -> list[models.ScoredPoint]:
-        await self.ensure_collection()
-        query_filter = build_qdrant_filter(filters or {})
-        return await asyncio.to_thread(
-            self.client.search,
-            collection_name=self.settings.qdrant_collection,
-            query_vector=query_embedding,
-            query_filter=query_filter,
-            limit=top_k,
-            with_payload=True,
-        )
+    ) -> list[ScoredPoint]:
+        async with SessionLocal() as session:
+            stmt = select(Article).where(Article.embedding_data.is_not(None))
+
+            if filters:
+                source = filters.get("source")
+                sources = filters.get("sources")
+                if source:
+                    stmt = stmt.where(Article.source == source)
+                elif sources:
+                    stmt = stmt.where(Article.source.in_(sources))
+
+                language = filters.get("language")
+                if language:
+                    stmt = stmt.where(Article.language == language)
+
+                date_from = filters.get("date_from")
+                if date_from:
+                    try:
+                        dt_from = datetime.fromisoformat(date_from)
+                    except ValueError:
+                        dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+                    stmt = stmt.where(Article.published_at >= dt_from)
+
+                date_to = filters.get("date_to")
+                if date_to:
+                    try:
+                        dt_to = datetime.fromisoformat(date_to)
+                    except ValueError:
+                        dt_to = datetime.strptime(date_to, "%Y-%m-%d")
+                    dt_to = dt_to.replace(hour=23, minute=59, second=59)
+                    stmt = stmt.where(Article.published_at <= dt_to)
+
+            res = await session.scalars(stmt)
+            articles = list(res.all())
+
+            if not articles:
+                return []
+
+            q_vec = np.array(query_embedding, dtype=np.float32)
+            q_norm = np.linalg.norm(q_vec)
+            if q_norm == 0:
+                return []
+
+            scored_points: list[ScoredPoint] = []
+            for article in articles:
+                if not article.embedding_data:
+                    continue
+                try:
+                    vec = np.array(json.loads(article.embedding_data), dtype=np.float32)
+                    v_norm = np.linalg.norm(vec)
+                    if v_norm == 0:
+                        continue
+                    score = float(np.dot(q_vec, vec) / (q_norm * v_norm))
+                    payload = {
+                        "article_id": str(article.id),
+                        "title": article.title,
+                        "source": article.source,
+                        "url": article.url,
+                        "language": article.language,
+                        "published_at": article.published_at.isoformat() if article.published_at else None,
+                        "cluster_id": article.cluster_id,
+                        "entity_names": [],
+                    }
+                    scored_points.append(ScoredPoint(id=article.id, score=score, payload=payload))
+                except Exception:  # noqa: BLE001
+                    continue
+
+            scored_points.sort(key=lambda p: p.score, reverse=True)
+            return scored_points[:top_k]
 
     async def update_cluster_metadata(self, article_id: int, cluster_id: int | None) -> None:
-        await self.ensure_collection()
-        await asyncio.to_thread(
-            self.client.set_payload,
-            collection_name=self.settings.qdrant_collection,
-            payload={"cluster_id": cluster_id},
-            points=[article_id],
-            wait=True,
-        )
+        async with SessionLocal() as session:
+            article = await session.get(Article, article_id)
+            if article:
+                article.cluster_id = cluster_id
+                await session.commit()
 
     async def delete_article(self, article_id: int) -> None:
-        await self.ensure_collection()
-        await asyncio.to_thread(
-            self.client.delete,
-            collection_name=self.settings.qdrant_collection,
-            points_selector=models.PointIdsList(points=[article_id]),
-            wait=True,
-        )
+        async with SessionLocal() as session:
+            article = await session.get(Article, article_id)
+            if article:
+                article.embedding_data = None
+                await session.commit()
 
-    async def fetch_ready_points(self) -> list[models.Record]:
-        await self.ensure_collection()
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"http://{self.settings.qdrant_host}:{self.settings.qdrant_port}/collections/{self.settings.qdrant_collection}/points/scroll",
-                json={
-                    "limit": 10000,
-                    "with_payload": True,
-                    "with_vector": True,
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
+    async def fetch_ready_points(self) -> list[Record]:
+        async with SessionLocal() as session:
+            stmt = select(Article).where(Article.embedding_data.is_not(None))
+            res = await session.scalars(stmt)
+            articles = list(res.all())
 
-        points = payload.get("result", {}).get("points", [])
-        return [
-            models.Record(
-                id=point["id"],
-                payload=point.get("payload") or {},
-                vector=point.get("vector"),
-            )
-            for point in points
-            if point.get("vector")
-        ]
-
-
-def build_qdrant_filter(filters: dict) -> models.Filter | None:
-    conditions: list[models.FieldCondition] = []
-    should_conditions: list[models.FieldCondition] = []
-
-    source = filters.get("source")
-    sources = filters.get("sources")
-    if source:
-        conditions.append(models.FieldCondition(key="source", match=models.MatchValue(value=source)))
-    elif sources:
-        should_conditions.extend([models.FieldCondition(key="source", match=models.MatchValue(value=item)) for item in sources])
-
-    language = filters.get("language")
-    if language:
-        conditions.append(models.FieldCondition(key="language", match=models.MatchValue(value=language)))
-
-    date_from = filters.get("date_from")
-    date_to = filters.get("date_to")
-    if date_from or date_to:
-        conditions.append(
-            models.FieldCondition(
-                key="published_at_ts",
-                range=models.Range(
-                    gte=to_timestamp(date_from) if date_from else None,
-                    lte=to_timestamp(date_to, end_of_day=True) if date_to else None,
-                ),
-            )
-        )
-
-    if not conditions and not should_conditions:
-        return None
-    return models.Filter(must=conditions, should=should_conditions or None)
-
-
-def to_timestamp(value: datetime | str, end_of_day: bool = False) -> int:
-    if isinstance(value, str):
-        parsed = datetime.fromisoformat(f"{value}T23:59:59" if end_of_day else f"{value}T00:00:00")
-    else:
-        parsed = value
-    return int(parsed.timestamp())
+            records: list[Record] = []
+            for article in articles:
+                if not article.embedding_data:
+                    continue
+                try:
+                    vec = json.loads(article.embedding_data)
+                    records.append(Record(
+                        id=article.id,
+                        payload={"cluster_id": article.cluster_id},
+                        vector=vec,
+                    ))
+                except Exception:  # noqa: BLE001
+                    continue
+            return records

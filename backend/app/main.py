@@ -58,6 +58,12 @@ async def lifespan(_: FastAPI):
         scheduler.add_job(run_scheduled_clustering, "interval", minutes=settings.clustering_interval_minutes)
         scheduler.start()
 
+    # Trigger initial news ingestion immediately on app startup
+    try:
+        await run_scheduled_ingestion()
+    except Exception:  # noqa: BLE001
+        pass
+
     yield
 
     if scheduler.running:

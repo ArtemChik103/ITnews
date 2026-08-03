@@ -12,7 +12,11 @@ WHITESPACE_RE = re.compile(r"\s+")
 def clean_html(raw_text: str) -> str:
     soup = BeautifulSoup(raw_text or "", "html.parser")
     text = soup.get_text(separator=" ")
-    return WHITESPACE_RE.sub(" ", text).strip()
+    text = WHITESPACE_RE.sub(" ", text).strip()
+    for artifact in ["Read full article Comments", "Read full article", "Comments"]:
+        if text.endswith(artifact):
+            text = text[:-len(artifact)].strip()
+    return text
 
 
 def normalize_text(text: str) -> str:

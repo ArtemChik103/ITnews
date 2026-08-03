@@ -132,7 +132,7 @@ export default function SearchChatPanel({ onSourceClick }: Props) {
             }}
           >
             <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-              {msg.content}
+              {msg.content.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1')}
             </Typography>
 
             {msg.status && msg.status !== 'success' && msg.status !== 'error' && (

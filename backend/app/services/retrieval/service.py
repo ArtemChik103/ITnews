@@ -61,7 +61,25 @@ class RetrievalService:
 
         article_ids = [int(hit.id) for hit in hits]
         if not article_ids:
-            return []
+            from sqlalchemy import desc, or_
+            stmt = select(Article).where(
+                or_(Article.title.ilike(f"%{query}%"), Article.content_clean.ilike(f"%{query}%"))
+            ).order_by(desc(Article.published_at)).limit(top_k)
+            fallback_articles = list((await self.session.scalars(stmt)).all())
+            return [
+                RetrievedArticle(
+                    article_id=a.id,
+                    title=a.title,
+                    source=a.source,
+                    url=a.url,
+                    published_at=a.published_at,
+                    cluster_id=a.cluster_id,
+                    score=0.8,
+                    snippet=(a.content_clean or a.title)[: self.settings.rag_max_article_snippet_chars],
+                    entity_names=[],
+                )
+                for a in fallback_articles
+            ]
 
         articles = await self.session.scalars(select(Article).where(Article.id.in_(article_ids)))
         article_map = {article.id: article for article in articles}

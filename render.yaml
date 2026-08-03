@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: itnews-app
+    env: docker
+    dockerfilePath: ./docker/backend.Dockerfile
+    plan: free
+    region: frankfurt
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: itnews-db
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: itnews-db
+          property: port
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: itnews-db
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: itnews-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: itnews-db
+          property: password
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL_PRIMARY
+        value: llama-3.3-70b-versatile
+      - key: GROQ_MODEL_FALLBACK
+        value: llama-3.1-8b-instant
+      - key: ALLOWED_RSS_SOURCES
+        value: https://habr.com/ru/rss/all/all/?fl=ru,https://3dnews.ru/news/rss/,https://www.opennet.ru/opennews/opennews_all_utf.rss,https://www.cnews.ru/inc/rss/news.xml,https://techcrunch.com/category/artificial-intelligence/feed/,https://techcrunch.com/feed/,https://feeds.arstechnica.com/arstechnica/technology-lab,https://www.theverge.com/rss/index.xml,https://www.wired.com/feed/category/gear/latest/rss
+
+databases:
+  - name: itnews-db
+    plan: free
+    region: frankfurt

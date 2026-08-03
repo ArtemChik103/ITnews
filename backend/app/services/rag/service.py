@@ -118,8 +118,9 @@ def build_rag_messages(question: str, retrieval: RetrievalResult) -> list[dict]:
     ]
 
     system = (
-        "You answer only from the supplied context. Do not invent facts. "
-        "If context is insufficient, say so explicitly. Separate fact from interpretation. "
+        "You answer in Russian or English matching the language of the user's question. "
+        "Use only the supplied news context. Do not invent facts. "
+        "Do not use markdown bold formatting or asterisks (**) in your answer. Write clean, natural text. "
         "Return strict JSON with keys: answer, used_sources, mentioned_entities, confidence."
     )
     user = "\n\n".join(

@@ -5,6 +5,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.article import Article
+from app.services.graph.pipeline import graph_article
 from app.services.ingestion.preprocess import clean_html, detect_language, normalize_text
 from app.services.ingestion.sources import NewsAPIClient, RSSSourceClient
 
@@ -24,15 +25,23 @@ class IngestionPipeline:
         saved = 0
         duplicates = 0
         errors = 0
+        updated = 0
+        modified_articles: list[Article] = []
 
         for raw in raw_articles:
             try:
+                content_clean = clean_html(raw.content_raw)
                 existing = await self.session.scalar(select(Article).where(Article.url == raw.url))
                 if existing is not None:
                     duplicates += 1
+                    if len(content_clean) > len(existing.content_clean or ""):
+                        existing.content_raw = raw.content_raw
+                        existing.content_clean = content_clean
+                        existing.content_normalized = normalize_text(content_clean)
+                        modified_articles.append(existing)
+                        updated += 1
                     continue
 
-                content_clean = clean_html(raw.content_raw)
                 article = Article(
                     title=raw.title,
                     content_raw=raw.content_raw,
@@ -46,13 +55,29 @@ class IngestionPipeline:
                     embedding_attempts=0,
                 )
                 self.session.add(article)
+                modified_articles.append(article)
                 saved += 1
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Failed to ingest article %s: %s", raw.url, exc)
                 errors += 1
 
         await self.session.commit()
-        return {"fetched": len(raw_articles), "saved": saved, "duplicates": duplicates, "errors": errors}
+
+        # Extract entity graph for new/updated articles
+        for article in modified_articles:
+            try:
+                await graph_article(article)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Immediately index vectors for new articles
+        try:
+            from app.services.indexing.pipeline import IndexingPipeline
+            await IndexingPipeline(self.session).run()
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {"fetched": len(raw_articles), "saved": saved, "updated": updated, "duplicates": duplicates, "errors": errors}
 
     async def list_articles(self) -> Sequence[Article]:
         result = await self.session.scalars(select(Article).order_by(desc(Article.ingested_at)).limit(50))

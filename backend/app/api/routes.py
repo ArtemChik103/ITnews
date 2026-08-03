@@ -124,22 +124,36 @@ async def get_article_detail(
     graph_service = Neo4jGraphService()
     try:
         entities_raw = await graph_service.get_article_entities(article_id)
-        graph_data = await graph_service.get_graph_for_article(article_id, max_nodes=10)
-        entity_details = []
-        for name in entities_raw:
-            entity_details.append({"name": name})
+        if not entities_raw:
+            await graph_article(article)
+            entities_raw = await graph_service.get_article_entities(article_id)
+
+        entity_details = [{"name": name} for name in entities_raw]
     finally:
         await graph_service.close()
 
-    related_query = (
-        select(Article)
-        .where(Article.cluster_id == article.cluster_id, Article.id != article.id)
-        .order_by(desc(Article.published_at))
-        .limit(5)
-    )
     related = []
     if article.cluster_id is not None:
+        related_query = (
+            select(Article)
+            .where(Article.cluster_id == article.cluster_id, Article.id != article.id)
+            .order_by(desc(Article.published_at))
+            .limit(5)
+        )
         related_result = await session.scalars(related_query)
+        related = [
+            {"id": r.id, "title": r.title, "source": r.source, "url": r.url, "published_at": r.published_at.isoformat() if r.published_at else None}
+            for r in related_result.all()
+        ]
+
+    if not related:
+        fallback_query = (
+            select(Article)
+            .where(Article.source == article.source, Article.id != article.id)
+            .order_by(desc(Article.published_at))
+            .limit(5)
+        )
+        related_result = await session.scalars(fallback_query)
         related = [
             {"id": r.id, "title": r.title, "source": r.source, "url": r.url, "published_at": r.published_at.isoformat() if r.published_at else None}
             for r in related_result.all()

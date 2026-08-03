@@ -50,8 +50,10 @@ class IndexingPipeline:
                 article.embedding_error = result.error
 
                 if result.status == "ready" and result.embedding:
+                    import json
                     article.embedded_at = datetime.now(UTC)
-                    payload = await build_qdrant_payload(graph=graph, article=article)
+                    article.embedding_data = json.dumps(result.embedding)
+                    payload = await build_article_payload(graph=graph, article=article)
                     await vector_store.upsert_article_embedding(
                         article_id=article.id,
                         embedding=result.embedding,
@@ -78,10 +80,16 @@ class IndexingPipeline:
         }
 
 
-async def build_qdrant_payload(graph: Neo4jGraphService, article: Article) -> dict:
+from app.services.graph.pipeline import graph_article
+
+
+async def build_article_payload(graph: Neo4jGraphService, article: Article) -> dict:
     entity_names = []
     try:
         entity_names = await graph.get_article_entities(article.id)
+        if not entity_names:
+            await graph_article(article)
+            entity_names = await graph.get_article_entities(article.id)
     except Exception:  # noqa: BLE001
         entity_names = []
 
@@ -97,3 +105,4 @@ async def build_qdrant_payload(graph: Neo4jGraphService, article: Article) -> di
         "entity_names": entity_names,
         "has_entities": bool(entity_names),
     }
+

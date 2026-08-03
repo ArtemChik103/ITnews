@@ -19,15 +19,6 @@ class Settings(BaseSettings):
     postgres_host: str = Field(default="postgres", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
 
-    neo4j_uri: str = Field(default="bolt://neo4j:7687", alias="NEO4J_URI")
-    neo4j_user: str = Field(default="neo4j", alias="NEO4J_USER")
-    neo4j_password: str = Field(default="please-change-me", alias="NEO4J_PASSWORD")
-
-    redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")
-
-    qdrant_host: str = Field(default="qdrant", alias="QDRANT_HOST")
-    qdrant_port: int = Field(default=6333, alias="QDRANT_PORT")
-    qdrant_collection: str = Field(default="news_articles", alias="QDRANT_COLLECTION")
 
     enable_scheduler: bool = Field(default=True, alias="ENABLE_SCHEDULER")
     ingestion_interval_minutes: int = Field(default=30, alias="INGESTION_INTERVAL_MINUTES")
@@ -48,8 +39,8 @@ class Settings(BaseSettings):
     clustering_min_cluster_size: int = Field(default=5, alias="CLUSTERING_MIN_CLUSTER_SIZE")
     llm_provider: str = Field(default="groq", alias="LLM_PROVIDER")
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
-    groq_model_primary: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL_PRIMARY")
-    groq_model_fallback: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL_FALLBACK")
+    groq_model_primary: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL_PRIMARY")
+    groq_model_fallback: str = Field(default="llama-3.1-8b-instant", alias="GROQ_MODEL_FALLBACK")
     groq_model_fast: str = Field(default="llama-3.1-8b-instant", alias="GROQ_MODEL_FAST")
     groq_api_url: str = Field(
         default="https://api.groq.com/openai/v1/chat/completions",
@@ -65,7 +56,17 @@ class Settings(BaseSettings):
     default_language: str = Field(default="en", alias="DEFAULT_LANGUAGE")
     supported_languages: str = Field(default="ru,en", alias="SUPPORTED_LANGUAGES")
     allowed_rss_sources: str = Field(
-        default="https://techcrunch.com/feed/,https://www.wired.com/feed/rss,https://feeds.arstechnica.com/arstechnica/index",
+        default=(
+            "https://habr.com/ru/rss/all/all/?fl=ru,"
+            "https://3dnews.ru/news/rss/,"
+            "https://www.opennet.ru/opennews/opennews_all_utf.rss,"
+            "https://www.cnews.ru/inc/rss/news.xml,"
+            "https://techcrunch.com/category/artificial-intelligence/feed/,"
+            "https://techcrunch.com/feed/,"
+            "https://feeds.arstechnica.com/arstechnica/technology-lab,"
+            "https://www.theverge.com/rss/index.xml,"
+            "https://www.wired.com/feed/category/gear/latest/rss"
+        ),
         alias="ALLOWED_RSS_SOURCES",
     )
 
