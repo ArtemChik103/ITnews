@@ -41,30 +41,33 @@ async def run_scheduled_clustering() -> None:
         indexing_pipeline.indexed_since_recluster = 0
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-    await ensure_article_schema(engine)
-    vector_store = VectorStoreService()
-    await vector_store.ensure_collection()
-    await vector_store.close()
-    graph = Neo4jGraphService()
-    await graph.initialize()
-    await graph.close()
-
-    if settings.enable_scheduler and not scheduler.running:
-        scheduler.add_job(run_scheduled_ingestion, "interval", minutes=settings.ingestion_interval_minutes)
-        scheduler.add_job(run_scheduled_indexing, "interval", minutes=settings.embedding_index_interval_minutes)
-        scheduler.add_job(run_scheduled_clustering, "interval", minutes=settings.clustering_interval_minutes)
-        scheduler.start()
-
-    # Trigger initial news ingestion asynchronously on app startup
+async def initialize_background_services() -> None:
     try:
-        asyncio.create_task(run_scheduled_ingestion())
-    except Exception:  # noqa: BLE001
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        await ensure_article_schema(engine)
+        vector_store = VectorStoreService()
+        await vector_store.ensure_collection()
+        await vector_store.close()
+        graph = Neo4jGraphService()
+        await graph.initialize()
+        await graph.close()
+
+        if settings.enable_scheduler and not scheduler.running:
+            scheduler.add_job(run_scheduled_ingestion, "interval", minutes=settings.ingestion_interval_minutes)
+            scheduler.add_job(run_scheduled_indexing, "interval", minutes=settings.embedding_index_interval_minutes)
+            scheduler.add_job(run_scheduled_clustering, "interval", minutes=settings.clustering_interval_minutes)
+            scheduler.start()
+
+        await run_scheduled_ingestion()
+    except Exception as exc:  # noqa: BLE001
         pass
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Start background initialization asynchronously so Uvicorn binds to PORT immediately
+    asyncio.create_task(initialize_background_services())
     yield
 
     if scheduler.running:

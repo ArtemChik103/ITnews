@@ -15,6 +15,7 @@ WORKDIR /app
 
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/all-MiniLM-L6-v2')"
 
 COPY backend /app/backend
 COPY --from=frontend-build /app/frontend/dist /app/backend/static
