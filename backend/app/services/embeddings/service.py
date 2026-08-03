@@ -2,11 +2,11 @@ import asyncio
 from dataclasses import dataclass
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 
 from app.core.config import get_settings
 
-_model: SentenceTransformer | None = None
+_model: TextEmbedding | None = None
 
 
 @dataclass(slots=True)
@@ -49,9 +49,11 @@ class EmbeddingService:
         )
 
     def _encode(self, text: str) -> list[float]:
-        model = get_sentence_transformer()
-        embedding = model.encode(text, normalize_embeddings=True)
-        vector = np.asarray(embedding, dtype=np.float32)
+        model = get_fastembed_model()
+        embeddings = list(model.embed([text]))
+        if not embeddings:
+            return []
+        vector = np.asarray(embeddings[0], dtype=np.float32)
         norm = np.linalg.norm(vector)
         if norm > 0:
             vector = vector / norm
@@ -71,9 +73,10 @@ def build_embedding_input(title: str, content_clean: str) -> str:
     return ""
 
 
-def get_sentence_transformer() -> SentenceTransformer:
+def get_fastembed_model() -> TextEmbedding:
     global _model
     if _model is None:
         settings = get_settings()
-        _model = SentenceTransformer(settings.embedding_model)
+        _model = TextEmbedding(model_name=settings.embedding_model)
     return _model
+
