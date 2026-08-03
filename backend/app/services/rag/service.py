@@ -136,8 +136,14 @@ def build_rag_messages(question: str, retrieval: RetrievalResult) -> list[dict]:
 
 
 def parse_llm_output(text: str) -> dict:
+    import re
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
     try:
-        payload = json.loads(text)
+        payload = json.loads(cleaned)
         answer = payload.get("answer") or text
         if isinstance(answer, list):
             answer = "\n".join(str(item) for item in answer)
@@ -146,7 +152,18 @@ def parse_llm_output(text: str) -> dict:
             "confidence": float(payload.get("confidence", 0.6)),
         }
     except Exception:  # noqa: BLE001
-        return {"answer": text.strip(), "confidence": 0.55}
+        pass
+
+    if "answer:" in cleaned.lower():
+        match = re.search(
+            r"answer:\s*(.*?)(?:\n\s*(?:used_sources|mentioned_entities|confidence):|$)",
+            cleaned,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if match:
+            return {"answer": match.group(1).strip(), "confidence": 0.8}
+
+    return {"answer": cleaned, "confidence": 0.55}
 
 
 def build_retrieval_only_answer(retrieval: RetrievalResult) -> str:
