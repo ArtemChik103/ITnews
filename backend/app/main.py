@@ -23,22 +23,31 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 
 
 async def run_scheduled_ingestion() -> None:
-    async with SessionLocal() as session:
-        await IngestionPipeline(session).run()
+    try:
+        async with SessionLocal() as session:
+            await IngestionPipeline(session).run()
+    except asyncio.CancelledError:
+        pass
 
 
 async def run_scheduled_indexing() -> None:
-    async with SessionLocal() as session:
-        result = await IndexingPipeline(session).run()
-        if result["trigger_recluster"]:
-            await ClusteringService(session).recluster()
-            indexing_pipeline.indexed_since_recluster = 0
+    try:
+        async with SessionLocal() as session:
+            result = await IndexingPipeline(session).run()
+            if result["trigger_recluster"]:
+                await ClusteringService(session).recluster()
+                indexing_pipeline.indexed_since_recluster = 0
+    except asyncio.CancelledError:
+        pass
 
 
 async def run_scheduled_clustering() -> None:
-    async with SessionLocal() as session:
-        await ClusteringService(session).recluster()
-        indexing_pipeline.indexed_since_recluster = 0
+    try:
+        async with SessionLocal() as session:
+            await ClusteringService(session).recluster()
+            indexing_pipeline.indexed_since_recluster = 0
+    except asyncio.CancelledError:
+        pass
 
 
 async def initialize_background_services() -> None:
