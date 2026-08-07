@@ -76,7 +76,7 @@ curl -X POST http://localhost:8000/ingestion/run
 
 ---
 
-## ️ Переменные окружения
+## Переменные окружения
 
 | Переменная | Описание |
 |---|---|
@@ -107,17 +107,17 @@ curl -X POST http://localhost:8000/ingestion/run
 ## Структура проекта
 
 ```
-├── frontend/           # React + TypeScript + Vite + MUI
-│   └── src/
-│       ├── components/ # Граф, RAG-чат, список новостей
-│       ├── pages/      # Dashboard, Article, Entity views
-│       └── store/      # Zustand состояние
-├── backend/            # FastAPI + SQLAlchemy
-│   └── app/
-│       ├── api/        # Маршруты API
-│       ├── models/     # Модели PostgreSQL
-│       └── services/   # RAG, Web Scraper, NER, Vector Store
-├── docker/             # Dockerfile & Nginx конфиги
-├── render.yaml         # Конфигурация для 1-click деплоя на Render.com
-└── docker-compose.yml  # Локальная оркестрация контейнеров
+├── frontend/ # React + TypeScript + Vite + MUI
+│ └── src/
+│ ├── components/ # Граф, RAG-чат, список новостей
+│ ├── pages/ # Dashboard, Article, Entity views
+│ └── store/ # Zustand состояние
+├── backend/ # FastAPI + SQLAlchemy
+│ └── app/
+│ ├── api/ # Маршруты API
+│ ├── models/ # Модели PostgreSQL
+│ └── services/ # RAG, Web Scraper, NER, Vector Store
+├── docker/ # Dockerfile & Nginx конфиги
+├── render.yaml # Конфигурация для 1-click деплоя на Render.com
+└── docker-compose.yml # Локальная оркестрация контейнеров
 ```
