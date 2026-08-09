@@ -1,12 +1,8 @@
 # IT News Platform
 
-
-**🚀 Live Application (Render.com):** [https://itnews-app.onrender.com](https://itnews-app.onrender.com)
-
+**🚀 Live Application (Render):** [https://itnews-app.onrender.com](https://itnews-app.onrender.com)
 
 Ультралегковесная платформа для автоматического сбора, анализа и визуализации IT-новостей на русском и английском языках с графом знаний, векторным семантическим поиском и RAG-ответами на базе ИИ.
-
- **Live Demo**: [https://itnews-app.onrender.com](https://itnews-app.onrender.com)
 
 ---
 
